@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="安全庫存自動化系統 v4.3.1 - Python 計算引擎 + HTML 可視化界面 | 混合式架構" />
+  <title>安全庫存系統 v4.3.1</title>
+
+  <!-- Bootstrap CSS (必需，用於基礎樣式) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css">
+
+  <!-- Font Awesome (圖標) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+
+  <!-- 自訂樣式 -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/comparison_addon.css') }}">
+
+  <style>
+    /* ================================================== */
+    /* SAP MM17 匯出功能樣式 (v4.3.1 修復版) */
+    /* ================================================== */
+
+    /* 導出按鈕組 */
+    #exportButtons {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    #exportButtons .btn-group {
+      display: inline-block;
+    }
+
+    /* SAP 模式選擇器 */
+    #sapModeSelector {
+      background-color: #e7f3ff;
+      border: 1px solid #0056b3;
+      border-left: 4px solid #0056b3;
+      padding: 1rem;
+      border-radius: 0.25rem;
+      margin-top: 1rem;
+    }
+
+    #sapModeSelector h6 {
+      color: #0056b3;
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    #sapModeSelector p {
+      margin-bottom: 0.75rem;
+      color: #333;
+      font-size: 0.9rem;
+    }
+
+    #sapModeSelector .form-check-inline {
+      margin-right: 1.5rem;
+    }
+
+    #sapModeSelector .form-check-label {
+      cursor: pointer;
+      font-weight: 500;
+      margin-left: 0.25rem;
+    }
+
+    #sapModeSelector .form-check-input {
+      cursor: pointer;
+      margin-top: 0.25rem;
+    }
+
+    /* 響應式設計 */
+    @media (max-width: 768px) {
+      #exportButtons {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      #exportButtons .btn,
+      #exportButtons .btn-group {
+        width: 100%;
+        margin-left: 0 !important;
+      }
+
+      #sapModeSelector .form-check-inline {
+        display: block;
+        margin-right: 0;
+        margin-bottom: 0.5rem;
+      }
+    }
+
+    /* 確保 d-none 正常工作 */
+    .d-none {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <!-- ============================================ -->
+    <!-- Header -->
+    <!-- ============================================ -->
+    <header>
+      <div class="logo-icon">🧮</div>
+      <h1>
+        安全庫存自動化系統
+        <span class="version">v4.3.1</span>
+      </h1>
+      <p class="subtitle">Python 計算引擎 + HTML 可視化界面 | 混合式架構</p>
+      <p class="formula-note">SS = Z × σ_monthly × √(LT/30) | 支援移動平均、對比分析、季度可視化、分頁搜尋、SAP MM17 匯出</p>
+    </header>
+
+    <!-- Alert 通知 -->
+    <div id="alertError" class="alert alert-error" style="display:none;"></div>
+    <div id="alertSuccess" class="alert alert-success" style="display:none;"></div>
+    <div id="alertWarning" class="alert alert-warning" style="display:none;"></div>
+
+    <!-- ============================================ -->
+    <!-- 上傳區域 -->
+    <!-- ============================================ -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">📁</div>
+        <span class="card-title">上傳資料檔案</span>
+      </div>
+
+      <div class="upload-grid">
+        <!-- 銷貨資料 -->
+        <div class="upload-card" id="salesUpload">
+          <label>銷貨資料（主檔）<span class="required">*必要</span></label>
+          <div class="upload-area">
+            <div class="upload-icon">📤</div>
+            <div class="upload-text">銷貨明細 Excel</div>
+            <div class="upload-hint">計算 SS 用</div>
+          </div>
+          <input type="file" id="salesFile" accept=".xlsx,.xls" style="display:none;" />
+          <div class="file-info" style="display:none;"></div>
+        </div>
+
+        <!-- 單價表 -->
+        <div class="upload-card" id="priceUpload">
+          <label>單價對照表<span class="optional">選填</span></label>
+          <div class="upload-area">
+            <div class="upload-icon">💰</div>
+            <div class="upload-text">單價表 Excel</div>
+            <div class="upload-hint">含: 料號, 單價</div>
+          </div>
+          <input type="file" id="priceFile" accept=".xlsx,.xls" style="display:none;" />
+          <div class="file-info" style="display:none;"></div>
+        </div>
+
+        <!-- 庫存計劃 -->
+        <div class="upload-card" id="planUpload">
+          <label>庫存計劃表<span class="optional">選填</span></label>
+          <div class="upload-area">
+            <div class="upload-icon">📦</div>
+            <div class="upload-text">ERP 庫存計劃</div>
+            <div class="upload-hint">需求/供給/調撥</div>
+          </div>
+          <input type="file" id="planFile" accept=".xlsx,.xls" style="display:none;" />
+          <div class="file-info" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- 計算參數 -->
+    <!-- ============================================ -->
+    <form id="calculationForm">
+      <div class="grid-2">
+        <!-- 左側：計算策略 -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon">⚙️</div>
+            <span class="card-title">計算策略</span>
+          </div>
+
+          <!-- 計算模式 -->
+          <div class="param-section">
+            <label>計算模式</label>
+            <div class="radio-group">
+              <label class="radio-item">
+                <input type="radio" name="calcMode" value="compare" checked />
+                <span class="radio-marker"></span>
+                <div>
+                  <strong>📊 對比模式</strong>
+                  <div class="radio-hint">同時計算分倉和總倉，並排顯示對比結果（支援分頁、搜尋、匯出）</div>
+                </div>
+              </label>
+
+              <label class="radio-item">
+                <input type="radio" name="calcMode" value="all" />
+                <span class="radio-marker"></span>
+                <div>
+                  <strong>📦 分倉計算</strong>
+                  <div class="radio-hint">各出貨點獨立計算</div>
+                </div>
+              </label>
+
+              <label class="radio-item">
+                <input type="radio" name="calcMode" value="total" />
+                <span class="radio-marker"></span>
+                <div>
+                  <strong>🏭 總倉合併</strong>
+                  <div class="radio-hint">全部視為一倉計算</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- ABC 服務水準 -->
+          <div class="param-section">
+            <label>差異化服務水準 (ABC 策略)</label>
+            <div class="strategy-grid">
+              <div class="strategy-col">
+                <span class="abc-label A">A 類 (重點)</span>
+                <select id="zA" name="zA" class="service-select">
+                  <option value="1.65">95% (1.65)</option>
+                  <option value="2.05" selected>98% (2.05)</option>
+                  <option value="2.33">99% (2.33)</option>
+                </select>
+              </div>
+              <div class="strategy-col">
+                <span class="abc-label B">B 類 (一般)</span>
+                <select id="zB" name="zB" class="service-select">
+                  <option value="1.28">90% (1.28)</option>
+                  <option value="1.65" selected>95% (1.65)</option>
+                  <option value="1.96">97.5% (1.96)</option>
+                </select>
+              </div>
+              <div class="strategy-col">
+                <span class="abc-label C">C 類 (次要)</span>
+                <select id="zC" name="zC" class="service-select">
+                  <option value="1.04">85% (1.04)</option>
+                  <option value="1.28" selected>90% (1.28)</option>
+                  <option value="1.65">95% (1.65)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- 其他參數 -->
+          <div class="grid-4">
+            <div>
+              <label for="leadTime">前置期 (天)</label>
+              <input type="number" id="leadTime" name="leadTime" value="30" min="1" max="365" />
+            </div>
+            <div>
+              <label for="minMonths">最少月數</label>
+              <select id="minMonths" name="minMonths">
+                <option value="0">不限制</option>
+                <option value="2" selected>至少 2 月</option>
+                <option value="3">至少 3 月</option>
+              </select>
+            </div>
+            <div>
+              <label>離群值檢測</label>
+              <div class="toggle-wrapper active" id="outlierToggle">
+                <div class="toggle-switch"></div>
+                <span>MAD 方法</span>
+              </div>
+              <input type="checkbox" id="enableOutlier" name="enableOutlier" checked style="display:none;" />
+            </div>
+            <div>
+              <label>移動平均</label>
+              <div class="toggle-wrapper" id="maToggle">
+                <div class="toggle-switch"></div>
+                <span>啟用</span>
+              </div>
+              <input type="checkbox" name="enableMA" id="enableMA" style="display:none;" />
+            </div>
+          </div>
+
+          <!-- 移動平均設定 -->
+          <div id="maSettings" class="param-section" style="display:none;">
+            <label for="maWindow">移動平均窗口</label>
+            <div class="slider-container">
+              <input type="range" id="maWindow" name="maWindow" min="2" max="12" value="3" />
+              <span id="maWindowValue">3</span> 個月
+            </div>
+          </div>
+        </div>
+
+        <!-- 右側：月份選擇 -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon">📅</div>
+            <span class="card-title">計算範圍 (季節性過濾)</span>
+          </div>
+
+          <div class="month-selector" id="monthCheckboxes">
+            <div class="month-checkbox">
+              <input type="checkbox" id="month1" name="selectedMonths" value="1" checked />
+              <label for="month1" class="checkbox-label">1月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month2" name="selectedMonths" value="2" checked />
+              <label for="month2" class="checkbox-label">2月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month3" name="selectedMonths" value="3" checked />
+              <label for="month3" class="checkbox-label">3月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month4" name="selectedMonths" value="4" checked />
+              <label for="month4" class="checkbox-label">4月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month5" name="selectedMonths" value="5" checked />
+              <label for="month5" class="checkbox-label">5月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month6" name="selectedMonths" value="6" checked />
+              <label for="month6" class="checkbox-label">6月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month7" name="selectedMonths" value="7" checked />
+              <label for="month7" class="checkbox-label">7月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month8" name="selectedMonths" value="8" checked />
+              <label for="month8" class="checkbox-label">8月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month9" name="selectedMonths" value="9" checked />
+              <label for="month9" class="checkbox-label">9月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month10" name="selectedMonths" value="10" checked />
+              <label for="month10" class="checkbox-label">10月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month11" name="selectedMonths" value="11" checked />
+              <label for="month11" class="checkbox-label">11月</label>
+            </div>
+            <div class="month-checkbox">
+              <input type="checkbox" id="month12" name="selectedMonths" value="12" checked />
+              <label for="month12" class="checkbox-label">12月</label>
+            </div>
+          </div>
+
+          <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+            <button type="button" class="btn btn-secondary btn-sm" id="selectAllMonths">全選</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="deselectAllMonths">取消</button>
+          </div>
+
+          <div style="margin-top: 1.5rem;">
+            <button type="button" class="btn btn-primary" id="calculateBtn" style="width: 100%;">
+              🧮 開始計算
+            </button>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <!-- Loading -->
+    <div class="loading" id="loading" style="display:none;">
+      <div class="spinner"></div>
+      <div class="loading-text">正在計算中...</div>
+      <div class="loading-hint">處理大量資料需要時間，請稍候</div>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- 結果區域 -->
+    <!-- ============================================ -->
+    <section id="resultsSection" class="d-none">
+      <!-- 統計摘要（由 main.js 使用） -->
+      <div id="statsSummary"></div>
+
+      <!-- 對比分析（由 comparison.js 動態生成） -->
+      <div id="comparisonSection" class="d-none">
+        <div id="comparisonContent"></div>
+      </div>
+
+      <!-- 計算結果摘要（僅在非對比模式顯示） -->
+      <div class="card" id="summaryCard">
+        <div class="card-header">
+          <div class="card-icon">📈</div>
+          <span class="card-title">計算結果</span>
+        </div>
+
+        <div class="stats-row">
+          <div class="stat-box">
+            <div class="stat-value" id="statProducts">0</div>
+            <div class="stat-label">有效料號</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="statShortage" style="color: var(--status-red);">0</div>
+            <div class="stat-label">缺貨風險</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="statHealthy" style="color: var(--status-green);">0</div>
+            <div class="stat-label">健康庫存</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="statOverstock" style="color: var(--status-blue);">0</div>
+            <div class="stat-label">呆滯風險</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="statExcluded">0</div>
+            <div class="stat-label">已排除</div>
+          </div>
+        </div>
+
+        <div id="maSummary" class="info-box" style="display:none;">
+          <strong>📈 移動平均已啟用</strong>：
+          窗口 <span id="maWindowDisplay">3</span> 個月，
+          平均標準差降低 <span id="maAvgReduction">0</span>%
+        </div>
+
+        <!-- ============================================ -->
+        <!-- 匯出按鈕組（v4.3.1 修復版）-->
+        <!-- ============================================ -->
+        <div id="exportButtons">
+          <!-- Excel 匯出按鈕 -->
+          <button type="button" class="btn btn-primary" id="exportExcelBtn">
+            📥 匯出 Excel
+          </button>
+
+          <!-- SAP MM17 匯出按鈕（修復版 - 移除 Bootstrap dropdown 依賴）-->
+          <button id="exportSAPBtn" type="button" class="btn btn-success">
+            <i class="fas fa-file-export"></i> 匯出 SAP MM17
+          </button>
+
+          <!-- 重新計算按鈕 -->
+          <button type="button" class="btn btn-secondary" id="resetBtn" style="margin-left:auto;">
+            🔄 重新計算
+          </button>
+        </div>
+
+        <!-- SAP MM17 彈出菜單容器（由 JavaScript 動態生成內容）-->
+        <div id="sapMM17PopupMenu" style="display: none;"></div>
+
+        <!-- SAP 模式選擇器（對比模式時顯示，v4.3.1 新增）-->
+        <div id="sapModeSelector" class="d-none">
+          <h6><i class="fas fa-info-circle"></i> SAP MM17 匯出模式選擇</h6>
+          <p class="mb-2">您當前使用對比模式計算，請選擇要匯出的數據：</p>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="sapExportMode" id="sapModeAll" value="all" checked>
+            <label class="form-check-label" for="sapModeAll">
+              📦 分倉計算結果
+            </label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="sapExportMode" id="sapModeTotal" value="total">
+            <label class="form-check-label" for="sapModeTotal">
+              🏭 總倉計算結果
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 結果表格（僅在非對比模式顯示） -->
+      <div class="card" id="resultsTableCard">
+        <div class="card-header">
+          <div class="card-icon">📋</div>
+          <span class="card-title">詳細結果</span>
+        </div>
+
+        <div class="filter-row">
+          <div class="filter-tabs" id="filterTabs"></div>
+          <div class="search-box">
+            <input type="text" id="searchInput" placeholder="🔍 搜尋料號、品名..." />
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="table" id="resultsTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>出貨點</th>
+                <th>料號</th>
+                <th>品名</th>
+                <th>ABC</th>
+                <th class="text-right">月均需求</th>
+                <th class="text-right">標準差</th>
+                <th class="text-right">變異係數</th>
+                <th class="text-right">安全庫存</th>
+                <th class="text-right">再訂購點</th>
+                <th class="text-right">最大庫存</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- JavaScript Dependencies -->
+  <!-- ============================================ -->
+
+  <!-- jQuery (Bootstrap 依賴) -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+  <!-- Bootstrap JS (基礎功能) -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
+
+  <!-- Plotly.js (CDN) - 移到底部避免阻塞首屏 -->
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+  <!-- 功能模組：先載入被依賴的模組，再載 main.js -->
+  <script src="{{ url_for('static', filename='js/ma-viewer.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/comparison.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

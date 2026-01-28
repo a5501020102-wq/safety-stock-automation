@@ -1,0 +1,381 @@
+/**
+ * Comparison View v4.3.0 補充樣式
+ * 新增：分頁、搜尋、匯出功能樣式
+ */
+
+/* ==================== 匯出功能區 ==================== */
+.export-section {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.export-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0 0 16px 0;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+.export-controls {
+    display: flex;
+    gap: 20px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.export-filter {
+    flex: 1;
+    min-width: 250px;
+}
+
+.export-filter label {
+    display: block;
+    margin-bottom: 8px;
+    color: #374151;
+    font-size: 14px;
+}
+
+.export-filter select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #1f2937;
+    background-color: #ffffff;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.export-filter select:hover {
+    border-color: #3b82f6;
+}
+
+.export-filter select:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.export-buttons {
+    display: flex;
+    gap: 12px;
+}
+
+.export-buttons .btn {
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 500;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.export-buttons .btn-primary {
+    background: #3b82f6;
+    color: #ffffff;
+}
+
+.export-buttons .btn-primary:hover {
+    background: #2563eb;
+    box-shadow: 0 4px 6px rgba(59, 130, 246, 0.3);
+}
+
+.export-buttons .btn-secondary {
+    background: #6b7280;
+    color: #ffffff;
+}
+
+.export-buttons .btn-secondary:hover {
+    background: #4b5563;
+    box-shadow: 0 4px 6px rgba(107, 114, 128, 0.3);
+}
+
+.export-stats {
+    margin-top: 12px;
+    padding: 10px;
+    background: #f3f4f6;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #4b5563;
+}
+
+/* ==================== 搜尋框 ==================== */
+.table-search {
+    margin-bottom: 16px;
+}
+
+.table-search .form-control {
+    width: 100%;
+    padding: 10px 16px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #1f2937;
+    transition: all 0.2s;
+}
+
+.table-search .form-control:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.table-search .form-control::placeholder {
+    color: #9ca3af;
+}
+
+/* ==================== 表格排序 ==================== */
+.comparison-table thead th[data-sort] {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    transition: background-color 0.2s;
+}
+
+.comparison-table thead th[data-sort]:hover {
+    background-color: #f3f4f6;
+}
+
+.comparison-table thead th[data-sort]:active {
+    background-color: #e5e7eb;
+}
+
+/* ==================== 分頁控制 ==================== */
+.pagination-container {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.pagination-pages {
+    display: flex;
+    gap: 4px;
+}
+
+.btn-pagination {
+    padding: 6px 12px;
+    font-size: 14px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-pagination:hover:not(.disabled):not(.active) {
+    background: #f3f4f6;
+    border-color: #3b82f6;
+    color: #3b82f6;
+}
+
+.btn-pagination.active {
+    background: #3b82f6;
+    color: #ffffff;
+    border-color: #3b82f6;
+    font-weight: 600;
+}
+
+.btn-pagination.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pagination-ellipsis {
+    padding: 6px 4px;
+    color: #9ca3af;
+    font-size: 14px;
+    align-self: flex-end;
+}
+
+.pagination-info {
+    text-align: center;
+    font-size: 13px;
+    color: #6b7280;
+    padding: 8px;
+}
+
+/* ==================== Fallback 圖表優化 ==================== */
+.fallback-chart {
+    padding: 20px;
+    text-align: center;
+}
+
+.fallback-bar {
+    margin: 12px 0;
+    padding: 16px;
+    border-radius: 8px;
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 16px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.fallback-info {
+    margin-top: 16px;
+    padding: 12px;
+    background: #f0fdf4;
+    color: #059669;
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+/* ==================== 響應式設計 ==================== */
+@media (max-width: 768px) {
+    .export-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .export-filter {
+        width: 100%;
+    }
+
+    .export-buttons {
+        width: 100%;
+        flex-direction: column;
+    }
+
+    .export-buttons .btn {
+        width: 100%;
+    }
+
+    .pagination-controls {
+        flex-wrap: wrap;
+    }
+
+    .pagination-pages {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .btn-pagination {
+        font-size: 12px;
+        padding: 4px 8px;
+    }
+}
+
+/* ==================== 表格容器優化 ==================== */
+.table-container {
+    max-height: 600px;
+    overflow-y: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+/* 滾動條美化 */
+.table-container::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+    background: #f3f4f6;
+    border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* ==================== 圖表容器優化 ==================== */
+.chart-container {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.chart-container .card-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2937;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+/* ==================== 詳情按鈕優化 ==================== */
+.btn-detail {
+    padding: 4px 12px;
+    font-size: 13px;
+    background: #3b82f6;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-detail:hover {
+    background: #2563eb;
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+}
+
+/* ==================== 載入狀態 ==================== */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.loading-spinner {
+    border: 4px solid #e5e7eb;
+    border-top: 4px solid #3b82f6;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* ==================== 空資料狀態 ==================== */
+.text-center {
+    text-align: center;
+}
+
+.text-muted {
+    color: #9ca3af;
+    padding: 40px 20px;
+    font-size: 14px;
+}
+
+/* ==================== 文字對齊 ==================== */
+.text-right {
+    text-align: right;
+}

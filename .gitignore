@@ -1,0 +1,59 @@
+﻿# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+
+# Flask
+flask_session/
+instance/
+
+# 上傳和輸出檔案
+uploads/
+cache/
+data/
+
+# 日誌
+*.log
+logs/
+
+# 備份檔案
+backup/
+**/backup/
+*.backup
+*.bak
+*.bak_*
+mainbackup/
+
+# 環境變數
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 作業系統
+.DS_Store
+Thumbs.db
+
+# 測試和臨時檔案
+test_*.py
+test_*.txt
+Pycharm diagnose.py
+scripts/
+tests/
+
+# 配置
+config/
+
+# SAP 測試資料
+Sap/
+
+# 舊版本和其他檔案
+web_app.py_v*.py
+main.py
+check_imports.py
+python_test_sap_mm17_complete.py
+test_main.py
