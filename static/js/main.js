@@ -1,9 +1,14 @@
 // ============================================================================
-// 安全庫存自動化系統 v4.3.1 Final - 主程式
+// 安全庫存自動化系統 v4.3.4 - 主程式（Z-scores 修復版）
 // ============================================================================
 // ✅ Code Review 完成
 // ✅ Debug 完成
-// ✅ 所有問題已修復
+// ✅ Z-scores 參數格式已修復
+//
+// v4.3.4 更新：
+// - ✅ 修復 z_scores 參數格式（z_a/z_b/z_c → z_scores: {A, B, C}）
+// - ✅ 新增參數驗證和除錯日誌
+// - ✅ 支援 abc_thresholds 參數（預設值）
 //
 // 功能：檔案上傳、參數設定、計算、結果顯示、SAP MM17 匯出
 // 架構：混合式 (Python 後端 + JavaScript 前端)
@@ -445,7 +450,7 @@ async function handleCalculation() {
 }
 
 /**
- * 取得計算參數
+ * 取得計算參數（v4.3.4 修復版）
  */
 function getCalculationParams() {
   const form = document.getElementById('calculationForm');
@@ -454,18 +459,56 @@ function getCalculationParams() {
   const calcMode = formData.get('calcMode') || 'all';
   const selectedMonths = Array.from(formData.getAll('selectedMonths')).map(Number);
 
-  return {
+  // ========================================
+  // ✅ v4.3.4: 修復 z_scores 參數格式
+  // ========================================
+  const zScores = {
+    A: parseFloat(formData.get('zA') || 2.05),
+    B: parseFloat(formData.get('zB') || 1.65),
+    C: parseFloat(formData.get('zC') || 1.28)
+  };
+
+  // ✅ 驗證 z_scores 數值合理性
+  Object.keys(zScores).forEach(key => {
+    const value = zScores[key];
+    if (isNaN(value) || value < 0.5 || value > 3.5) {
+      console.warn(`⚠️  Z-score ${key} 值異常: ${value}，使用預設值`);
+      const defaults = { A: 2.05, B: 1.65, C: 1.28 };
+      zScores[key] = defaults[key];
+    }
+  });
+
+  // ========================================
+  // ✅ v4.3.4: 新增 abc_thresholds 支援（使用預設值）
+  // ========================================
+  const abcThresholds = {
+    A: 0.80,  // 80% 累積占比
+    B: 0.95   // 95% 累積占比
+  };
+
+  // ========================================
+  // 組合參數
+  // ========================================
+  const params = {
     calc_mode: calcMode,
     enable_ma: document.getElementById('enableMA')?.checked || false,
     ma_window: parseInt(formData.get('maWindow') || 3),
     lead_time: parseInt(formData.get('leadTime') || 30),
     min_months: parseInt(formData.get('minMonths') || 2),
     enable_outlier: document.getElementById('enableOutlier')?.checked !== false,
-    z_a: parseFloat(formData.get('zA') || 2.05),
-    z_b: parseFloat(formData.get('zB') || 1.65),
-    z_c: parseFloat(formData.get('zC') || 1.28),
+    z_scores: zScores,              // ✅ 修正後的格式
+    abc_thresholds: abcThresholds,  // ✅ 新增
     selected_months: selectedMonths.length > 0 ? selectedMonths : [1,2,3,4,5,6,7,8,9,10,11,12]
   };
+
+  // ========================================
+  // ✅ 除錯日誌
+  // ========================================
+  console.log('📊 服務水準 (Z-scores):', zScores);
+  console.log('📊 ABC 門檻:', abcThresholds);
+  console.log('📤 完整計算參數:', params);
+
+  return params;
 }
 
 /**
@@ -1018,7 +1061,7 @@ function initSearch() {
  * DOMContentLoaded 主初始化
  */
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('🚀 系統啟動 v4.3.1 Final');
+  console.log('🚀 系統啟動 v4.3.4 (Z-scores 修復版)');
 
   // 初始化各項功能
   initFileUploads();
@@ -1033,7 +1076,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindSapMM17Events();
   }, 500);
 
-  console.log('✅ main.js v4.3.1 Final 已載入');
+  console.log('✅ main.js v4.3.4 已載入 - Z-scores 修復版');
 });
 
 // ============================================================================

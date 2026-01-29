@@ -2,9 +2,16 @@
 業務邏輯層 - Business Logic Layer
 從 Streamlit 提取的核心計算邏輯，供 Flask 和 Streamlit 共用
 
-Version: 4.3.1 (SAP MM17 Export Added)
+Version: 4.3.4 (z_scores & abc_thresholds Support)
 Author: 松鼠
-Last Updated: 2026-01-20
+Last Updated: 2026-01-29
+
+🔧 v4.3.4 功能增強：
+- ✅ calculate_comparison_mode() 支援 z_scores 和 abc_thresholds 參數
+- ✅ 參數驗證和預設值處理
+- ✅ 向後兼容（沒有參數時使用預設值）
+- ✅ 增強日誌輸出
+- ✅ 優化錯誤處理
 
 更新 v4.3.1：
 - ✅ 添加 SAP MM17 匯出功能（XLSX 和 CSV）
@@ -104,7 +111,7 @@ def _calc_cv(std_dev: Any, mean_demand: Any) -> float:
 
 
 # ============================================================================
-# 對比模式計算
+# 對比模式計算（v4.3.4 增強版）
 # ============================================================================
 
 def calculate_comparison_mode(
@@ -117,10 +124,26 @@ def calculate_comparison_mode(
         lead_time: int = 30,
         enable_outlier: bool = True,
         enable_ma: bool = False,
-        ma_window: int = 3
+        ma_window: int = 3,
+        z_scores: Optional[Dict[str, float]] = None,          # ✅ v4.3.4 新增
+        abc_thresholds: Optional[Dict[str, float]] = None     # ✅ v4.3.4 新增
 ) -> Dict[str, Any]:
     """
     對比模式：同時計算分倉(all)與總倉(total)
+
+    Args:
+        calculator: 計算引擎實例
+        sales_data: 銷貨資料
+        price_data: 單價資料（可選）
+        plan_data: 庫存計劃（可選）
+        selected_months: 選擇的月份
+        min_months: 最少月數
+        lead_time: 前置期（天）
+        enable_outlier: 啟用離群值檢測
+        enable_ma: 啟用移動平均
+        ma_window: 移動平均窗口
+        z_scores: 服務水準設定（可選）✅ v4.3.4
+        abc_thresholds: ABC 分類門檻（可選）✅ v4.3.4
 
     Returns:
         {
@@ -129,6 +152,24 @@ def calculate_comparison_mode(
             "comparison": {各種對比指標}
         }
     """
+    # ========================================
+    # ✅ v4.3.4: 參數預設值處理
+    # ========================================
+    if z_scores is None:
+        z_scores = {"A": 2.05, "B": 1.65, "C": 1.28}
+        logger.debug("z_scores 未提供，使用預設值")
+    else:
+        logger.debug(f"z_scores 已提供: {z_scores}")
+
+    if abc_thresholds is None:
+        abc_thresholds = {"A": 0.80, "B": 0.95}
+        logger.debug("abc_thresholds 未提供，使用預設值")
+    else:
+        logger.debug(f"abc_thresholds 已提供: {abc_thresholds}")
+
+    # ========================================
+    # 參數驗證
+    # ========================================
     if selected_months is None:
         selected_months = list(range(1, 13))
 
@@ -138,8 +179,18 @@ def calculate_comparison_mode(
     if not all(isinstance(m, int) and 1 <= m <= 12 for m in selected_months):
         raise ValueError("selected_months 必須包含 1-12 的月份（int）")
 
+    # ========================================
+    # 執行計算
+    # ========================================
+    logger.info(f"📊 對比模式計算開始")
+    logger.info(f"   服務水準: A={z_scores['A']:.2f}, B={z_scores['B']:.2f}, C={z_scores['C']:.2f}")
+    logger.info(f"   ABC門檻: A={abc_thresholds['A']:.0%}, B={abc_thresholds['B']:.0%}")
+
     try:
+        # ========================================
         # 分倉模式
+        # ========================================
+        logger.info(f"   → 計算分倉模式...")
         results_all, excluded_all, summary_all = calculator.calculate(
             sales_data=sales_data,
             price_data=price_data,
@@ -151,9 +202,15 @@ def calculate_comparison_mode(
             enable_outlier_detection=enable_outlier,
             enable_moving_average=enable_ma,
             ma_window=ma_window,
+            z_scores=z_scores,              # ✅ v4.3.4 傳遞
+            abc_thresholds=abc_thresholds,  # ✅ v4.3.4 傳遞
         )
+        logger.info(f"   ✅ 分倉計算完成: {len(results_all)} 筆")
 
+        # ========================================
         # 總倉模式
+        # ========================================
+        logger.info(f"   → 計算總倉模式...")
         results_total, excluded_total, summary_total = calculator.calculate(
             sales_data=sales_data,
             price_data=price_data,
@@ -165,13 +222,20 @@ def calculate_comparison_mode(
             enable_outlier_detection=enable_outlier,
             enable_moving_average=enable_ma,
             ma_window=ma_window,
+            z_scores=z_scores,              # ✅ v4.3.4 傳遞
+            abc_thresholds=abc_thresholds,  # ✅ v4.3.4 傳遞
         )
+        logger.info(f"   ✅ 總倉計算完成: {len(results_total)} 筆")
 
     except Exception as e:
-        logger.exception(f"計算過程發生錯誤：{e}")
+        logger.exception(f"❌ 計算過程發生錯誤：{e}")
         raise ValueError(f"計算失敗：{str(e)}") from e
 
-    # --- 對比分析（安全計算）---
+    # ========================================
+    # 對比分析（安全計算）
+    # ========================================
+    logger.info(f"   → 生成對比分析...")
+
     total_ss_all = sum(_safe_float(getattr(r, "safety_stock", 0), 0) for r in (results_all or []))
     total_ss_total = sum(_safe_float(getattr(r, "safety_stock", 0), 0) for r in (results_total or []))
 
@@ -188,6 +252,10 @@ def calculate_comparison_mode(
     savings_value_pct = 0.0
     if total_value_all > 0:
         savings_value_pct = (cost_saved / total_value_all) * 100
+
+    logger.info(f"   ✅ 對比分析完成")
+    logger.info(f"      節省數量: {int(inventory_saved)} ({savings_pct:.2f}%)")
+    logger.info(f"      節省金額: ${cost_saved:.2f} ({savings_value_pct:.2f}%)")
 
     # ✅ 同時輸出兩套 key（避免前端字段不一致）
     comparison = {
@@ -1063,9 +1131,9 @@ def _serialize_excluded(excluded: List[Any]) -> List[Dict[str, Any]]:
 # 版本資訊
 # ============================================================================
 
-__version__ = "4.3.1"
+__version__ = "4.3.4"
 __author__ = "松鼠"
-__last_updated__ = "2026-01-20"
+__last_updated__ = "2026-01-29"
 
 
 def get_version_info() -> Dict[str, str]:
@@ -1075,6 +1143,9 @@ def get_version_info() -> Dict[str, str]:
         "author": __author__,
         "last_updated": __last_updated__,
         "changes": [
+            "v4.3.4: 支援 z_scores 和 abc_thresholds 參數（對比模式）",
+            "v4.3.4: 增強參數驗證和日誌輸出",
+            "v4.3.4: 向後兼容（沒有參數時使用預設值）",
             "v4.3.1: 添加 SAP MM17 匯出功能（XLSX 和 CSV）",
             "v4.3.1: 添加對比模式完整 Excel 匯出",
             "v4.3.1: 優化代碼結構和錯誤處理",

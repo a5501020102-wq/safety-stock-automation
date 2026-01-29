@@ -2,9 +2,15 @@
 Safety Stock Calculator - Core calculation module (Optimized & Reviewed).
 安全庫存計算核心模組 (優化與審查版)
 
-Version: 4.2.1 (Fixed: CV and Reorder Point)
+Version: 4.3.4 (Z-scores & ABC Thresholds Support)
 Author: 松鼠
-Last Updated: 2026-01-19
+Last Updated: 2026-01-29
+
+Changelog v4.3.4:
+- ✅ Added: z_scores 參數支援（A/B/C 類服務水準）
+- ✅ Added: abc_thresholds 參數支援（ABC 分類門檻）
+- ✅ Fixed: calculate() 方法接受新參數
+- ✅ Improved: 參數覆寫邏輯
 
 Changelog v4.2.1:
 - ✅ Fixed: 添加 CV (Coefficient of Variation) 計算
@@ -13,10 +19,12 @@ Changelog v4.2.1:
 - ✅ Improved: 完整的數據驗證
 - ✅ Improved: 更好的錯誤處理
 
-Key Fixes:
+Key Features:
 1. CV = std_dev / mean_demand (避免除以零)
 2. reorder_point = lead_time_demand + safety_stock
 3. max_inventory = reorder_point + order_quantity (可選)
+4. z_scores = {A: 2.05, B: 1.65, C: 1.28} (可自訂)
+5. abc_thresholds = {A: 0.80, B: 0.95} (可自訂)
 """
 
 import logging
@@ -260,7 +268,7 @@ class SafetyStockCalculator:
             default_order_quantity=calc_config.get("default_order_quantity", 0),
         )
 
-        logger.info("SafetyStockCalculator initialized (v4.2.1 - CV & ROP Fixed)")
+        logger.info("SafetyStockCalculator initialized (v4.3.4 - Z-scores & ABC Support)")
 
     def calculate(
             self,
@@ -273,13 +281,36 @@ class SafetyStockCalculator:
             min_months: int | None = None,
             lead_time_days: int | None = None,
             z_scores: dict[str, float] | None = None,
+            abc_thresholds: dict[str, float] | None = None,  # ✅ v4.3.4: 新增
             enable_outlier_detection: bool | None = None,
             enable_moving_average: bool | None = None,
             ma_window: int | None = None,
     ) -> tuple[list[CalculationResult], list[ExcludedItem], CalculationSummary]:
-        """Execute the complete safety stock calculation."""
+        """
+        Execute the complete safety stock calculation.
+
+        ✅ v4.3.4: 新增 abc_thresholds 參數支援
+
+        Args:
+            sales_data: 銷貨資料
+            price_data: 單價資料（可選）
+            plan_data: 庫存計畫資料（可選）
+            calc_mode: 計算模式 ('all', 'total', 'single')
+            target_site: 目標出貨點（僅 single 模式）
+            selected_months: 選擇的月份列表
+            min_months: 最少需求月數
+            lead_time_days: 前置天數
+            z_scores: 服務水準 Z-scores，例如 {"A": 2.05, "B": 1.65, "C": 1.28}
+            abc_thresholds: ABC 分類門檻，例如 {"A": 0.80, "B": 0.95}
+            enable_outlier_detection: 是否啟用離群值檢測
+            enable_moving_average: 是否啟用移動平均
+            ma_window: 移動平均窗口大小
+
+        Returns:
+            (結果列表, 排除項目列表, 計算摘要)
+        """
         logger.info("=" * 60)
-        logger.info("開始安全庫存計算 (v4.2.1)")
+        logger.info("開始安全庫存計算 (v4.3.4)")
         logger.info("=" * 60)
 
         # Create options with overrides
@@ -288,10 +319,21 @@ class SafetyStockCalculator:
             min_months=min_months,
             lead_time_days=lead_time_days,
             z_scores=z_scores,
+            abc_thresholds=abc_thresholds,  # ✅ v4.3.4: 新增
             enable_outlier_detection=enable_outlier_detection,
             enable_moving_average=enable_moving_average,
             ma_window=ma_window,
         )
+
+        # ✅ v4.3.4: 日誌輸出參數資訊
+        logger.info(f"📊 計算參數：")
+        logger.info(f"   服務水準: A={options.z_scores['A']:.2f}, "
+                    f"B={options.z_scores['B']:.2f}, "
+                    f"C={options.z_scores['C']:.2f}")
+        logger.info(f"   ABC門檻: A={options.abc_thresholds['A']:.0%}, "
+                    f"B={options.abc_thresholds['B']:.0%}")
+        logger.info(f"   前置期: {options.lead_time_days} 天")
+        logger.info(f"   最少月數: {options.min_months}")
 
         # Create request object
         request = CalculationRequest(
@@ -318,11 +360,16 @@ class SafetyStockCalculator:
             min_months: int | None = None,
             lead_time_days: int | None = None,
             z_scores: dict[str, float] | None = None,
+            abc_thresholds: dict[str, float] | None = None,  # ✅ v4.3.4: 新增
             enable_outlier_detection: bool | None = None,
             enable_moving_average: bool | None = None,
             ma_window: int | None = None,
     ) -> CalculationOptions:
-        """Create calculation options with overrides applied to defaults."""
+        """
+        Create calculation options with overrides applied to defaults.
+
+        ✅ v4.3.4: 新增 abc_thresholds 參數處理
+        """
         # Start with defaults
         options = CalculationOptions(
             lead_time_days=self._default_options.lead_time_days,
@@ -348,18 +395,36 @@ class SafetyStockCalculator:
         # Apply overrides
         if lead_time_days is not None:
             options.lead_time_days = lead_time_days
+            logger.debug(f"覆寫 lead_time_days: {lead_time_days}")
+
         if min_months is not None:
             options.min_months = min_months
+            logger.debug(f"覆寫 min_months: {min_months}")
+
         if z_scores is not None:
             options.z_scores = z_scores.copy()
+            logger.debug(f"覆寫 z_scores: {z_scores}")
+
+        # ✅ v4.3.4: 處理 abc_thresholds 覆寫
+        if abc_thresholds is not None:
+            options.abc_thresholds = abc_thresholds.copy()
+            logger.debug(f"覆寫 abc_thresholds: {abc_thresholds}")
+
         if enable_outlier_detection is not None:
             options.enable_outlier_detection = enable_outlier_detection
+            logger.debug(f"覆寫 enable_outlier_detection: {enable_outlier_detection}")
+
         if selected_months is not None:
             options.selected_months = selected_months.copy()
+            logger.debug(f"覆寫 selected_months: {selected_months}")
+
         if enable_moving_average is not None:
             options.enable_moving_average = enable_moving_average
+            logger.debug(f"覆寫 enable_moving_average: {enable_moving_average}")
+
         if ma_window is not None:
             options.ma_window = ma_window
+            logger.debug(f"覆寫 ma_window: {ma_window}")
 
         return options
 
@@ -835,7 +900,11 @@ class SafetyStockCalculator:
             items: list[dict[str, Any]],
             options: CalculationOptions,
     ) -> None:
-        """Perform ABC classification based on total value or quantity."""
+        """
+        Perform ABC classification based on total value or quantity.
+
+        ✅ v4.3.4: 使用 options.abc_thresholds 進行分類
+        """
         if not items:
             return
 
@@ -860,8 +929,11 @@ class SafetyStockCalculator:
             return
 
         cumulative = 0.0
+        # ✅ v4.3.4: 使用參數傳入的 abc_thresholds
         threshold_a = options.abc_thresholds["A"]
         threshold_b = options.abc_thresholds["B"]
+
+        logger.debug(f"ABC 分類門檻: A={threshold_a:.0%}, B={threshold_b:.0%}")
 
         for item in items:
             cumulative += item[sort_key]
@@ -891,6 +963,7 @@ class SafetyStockCalculator:
         Calculate safety stock for each item.
 
         ✅ v4.2.1: 添加 CV 和 reorder_point 計算
+        ✅ v4.3.4: 使用 options.z_scores 進行安全庫存計算
 
         Formula:
         - SS = Z × σ_monthly × √(LT/30)
@@ -916,7 +989,7 @@ class SafetyStockCalculator:
                 ))
                 continue
 
-            # Get Z-score for ABC class
+            # ✅ v4.3.4: Get Z-score for ABC class from options
             abc_class: ABCClass = item["abc_class"]
             applied_z = options.z_scores.get(abc_class.value, 1.65)
 
@@ -958,6 +1031,7 @@ class SafetyStockCalculator:
             if len(results) < 3:
                 logger.debug(
                     f"SKU {item['sku']}: "
+                    f"ABC={abc_class.value}, Z={applied_z:.2f}, "
                     f"mean={mean_demand:.2f}, std={std_dev:.2f}, "
                     f"CV={coefficient_of_variation:.3f}, SS={safety_stock}, "
                     f"ROP={reorder_point}, Max={max_inventory}"

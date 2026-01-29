@@ -1,17 +1,23 @@
 """
-安全庫存自動化系統 - Flask 應用（v4.3.3 - 出貨點篩選修復版）
+安全庫存自動化系統 - Flask 應用（v4.3.4 - Z-scores 參數支援）
 Safety Stock Automation - Flask Application
 
-Version: 4.3.3
+Version: 4.3.4
 Author: 松鼠
-Last Updated: 2026-01-27
+Last Updated: 2026-01-29
 
-🔧 v4.3.3 緊急修復：
-- ✅ 修復 Excel 匯出未支援出貨點篩選
-- ✅ 修復 SAP MM17 匯出出貨點篩選邏輯
-- ✅ 增強參數驗證和錯誤訊息
-- ✅ 優化檔名生成（包含出貨點資訊）
-- ✅ 改善日誌輸出（更詳細的篩選資訊）
+🔧 v4.3.4 功能增強：
+- ✅ 新增 z_scores 參數支援（前端服務水準設定生效）
+- ✅ 新增 abc_thresholds 參數支援（可自訂 ABC 分類門檻）
+- ✅ 優化參數驗證和錯誤處理
+- ✅ 增強日誌輸出（顯示服務水準和 ABC 門檻）
+- ✅ 向後兼容（沒有傳參數時使用預設值）
+
+修改內容：
+- calculate() API：接收並傳遞 z_scores 和 abc_thresholds
+- 對比模式：同步支援新參數
+- 日誌：顯示完整的計算參數
+- 驗證：確保參數格式正確
 """
 
 from flask import Flask, render_template, request, jsonify, send_file, session
@@ -101,7 +107,7 @@ DEBUG_MODE = os.environ.get('FLASK_ENV') == 'development'
 for folder in ['UPLOAD_FOLDER', 'CACHE_FOLDER', 'OUTPUT_FOLDER', 'SESSION_FILE_DIR']:
     Path(app.config.get(folder, folder)).mkdir(parents=True, exist_ok=True)
 
-logger.info(f"🚀 Flask 應用初始化完成 v4.3.3")
+logger.info(f"🚀 Flask 應用初始化完成 v4.3.4")
 logger.info(f"📁 Session 存儲: {app.config['SESSION_FILE_DIR']}")
 
 
@@ -214,6 +220,102 @@ def filter_results_by_site(results: List, site_filter: Optional[str]) -> List:
     return filtered
 
 
+def validate_z_scores(z_scores: Dict[str, float]) -> Tuple[bool, str, Dict[str, float]]:
+    """
+    驗證 z_scores 參數格式和數值範圍
+
+    Args:
+        z_scores: Z-scores 字典
+
+    Returns:
+        (是否有效, 錯誤訊息, 清理後的值)
+    """
+    try:
+        # 預設值
+        default_z_scores = {"A": 2.05, "B": 1.65, "C": 1.28}
+
+        if not z_scores or not isinstance(z_scores, dict):
+            return True, '', default_z_scores
+
+        # 驗證必要的 key
+        required_keys = ['A', 'B', 'C']
+        for key in required_keys:
+            if key not in z_scores:
+                logger.warning(f"⚠️  z_scores 缺少 key: {key}，使用預設值")
+                z_scores[key] = default_z_scores[key]
+
+        # 驗證數值範圍 (合理的 Z-score 範圍: 0.5 - 3.5)
+        cleaned = {}
+        for key in required_keys:
+            try:
+                value = float(z_scores[key])
+                if not (0.5 <= value <= 3.5):
+                    logger.warning(f"⚠️  z_scores[{key}] = {value} 超出合理範圍 [0.5, 3.5]，使用預設值")
+                    cleaned[key] = default_z_scores[key]
+                else:
+                    cleaned[key] = value
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️  z_scores[{key}] 格式無效，使用預設值")
+                cleaned[key] = default_z_scores[key]
+
+        return True, '', cleaned
+
+    except Exception as e:
+        logger.error(f"❌ 驗證 z_scores 失敗：{e}")
+        return False, f'z_scores 參數格式錯誤：{str(e)}', default_z_scores
+
+
+def validate_abc_thresholds(abc_thresholds: Dict[str, float]) -> Tuple[bool, str, Dict[str, float]]:
+    """
+    驗證 abc_thresholds 參數格式和邏輯
+
+    Args:
+        abc_thresholds: ABC 分類門檻字典
+
+    Returns:
+        (是否有效, 錯誤訊息, 清理後的值)
+    """
+    try:
+        # 預設值
+        default_thresholds = {"A": 0.80, "B": 0.95}
+
+        if not abc_thresholds or not isinstance(abc_thresholds, dict):
+            return True, '', default_thresholds
+
+        # 驗證必要的 key
+        if 'A' not in abc_thresholds or 'B' not in abc_thresholds:
+            logger.warning(f"⚠️  abc_thresholds 格式不完整，使用預設值")
+            return True, '', default_thresholds
+
+        # 驗證數值
+        try:
+            threshold_a = float(abc_thresholds['A'])
+            threshold_b = float(abc_thresholds['B'])
+        except (ValueError, TypeError):
+            logger.warning(f"⚠️  abc_thresholds 數值格式無效，使用預設值")
+            return True, '', default_thresholds
+
+        # 驗證邏輯：A < B < 1.0
+        if not (0.0 < threshold_a < threshold_b < 1.0):
+            error_msg = f'ABC 門檻邏輯錯誤：需要 0 < A({threshold_a}) < B({threshold_b}) < 1'
+            logger.error(f"❌ {error_msg}")
+            return False, error_msg, default_thresholds
+
+        # 合理範圍檢查
+        if threshold_a < 0.5 or threshold_a > 0.95:
+            logger.warning(f"⚠️  A類門檻 {threshold_a} 不在建議範圍 [0.5, 0.95]，但仍接受")
+
+        if threshold_b < 0.8 or threshold_b > 0.99:
+            logger.warning(f"⚠️  B類門檻 {threshold_b} 不在建議範圍 [0.8, 0.99]，但仍接受")
+
+        cleaned = {"A": threshold_a, "B": threshold_b}
+        return True, '', cleaned
+
+    except Exception as e:
+        logger.error(f"❌ 驗證 abc_thresholds 失敗：{e}")
+        return False, f'abc_thresholds 參數格式錯誤：{str(e)}', default_thresholds
+
+
 # ============================================================================
 # 路由：健康檢查
 # ============================================================================
@@ -223,7 +325,7 @@ def health():
     """健康檢查端點"""
     return jsonify({
         'status': 'healthy',
-        'version': '4.3.3',
+        'version': '4.3.4',
         'modules_available': MODULES_AVAILABLE,
         'session_type': app.config['SESSION_TYPE'],
         'timestamp': datetime.now().isoformat()
@@ -392,7 +494,7 @@ def upload_plan():
 
 @app.route('/api/calculate', methods=['POST'])
 def calculate():
-    """執行安全庫存計算"""
+    """執行安全庫存計算（v4.3.4 - 支援 z_scores 和 abc_thresholds）"""
     try:
         if not MODULES_AVAILABLE:
             return jsonify({'success': False, 'error': '核心模組未載入'}), 500
@@ -403,6 +505,9 @@ def calculate():
         if not data:
             return jsonify({'success': False, 'error': '無效的請求數據'}), 400
 
+        # ========================================
+        # 基本參數
+        # ========================================
         calc_mode = data.get('calc_mode', 'all')
         enable_ma = data.get('enable_ma', False)
         ma_window = data.get('ma_window', 3)
@@ -411,11 +516,37 @@ def calculate():
         selected_months = data.get('selected_months', list(range(1, 13)))
         enable_outlier = data.get('enable_outlier', True)
 
+        # ========================================
+        # ✅ v4.3.4 新增：Z-scores（服務水準）
+        # ========================================
+        z_scores_raw = data.get('z_scores', None)
+        valid, error_msg, z_scores = validate_z_scores(z_scores_raw)
+        if not valid:
+            return jsonify({'success': False, 'error': error_msg}), 400
+
+        # ========================================
+        # ✅ v4.3.4 新增：ABC 分類門檻
+        # ========================================
+        abc_thresholds_raw = data.get('abc_thresholds', None)
+        valid, error_msg, abc_thresholds = validate_abc_thresholds(abc_thresholds_raw)
+        if not valid:
+            return jsonify({'success': False, 'error': error_msg}), 400
+
+        # ========================================
+        # 日誌輸出
+        # ========================================
         logger.info(f"🧮 開始計算")
         logger.info(f"   模式: {calc_mode}")
         logger.info(f"   移動平均: {'啟用' if enable_ma else '停用'} (窗口: {ma_window})")
         logger.info(f"   前置期: {lead_time} 天")
+        logger.info(f"   最少月數: {min_months}")
+        logger.info(f"   離群值檢測: {'啟用' if enable_outlier else '停用'}")
+        logger.info(f"   ✅ 服務水準: A={z_scores['A']:.2f}, B={z_scores['B']:.2f}, C={z_scores['C']:.2f}")
+        logger.info(f"   ✅ ABC門檻: A={abc_thresholds['A']:.0%}, B={abc_thresholds['B']:.0%}")
 
+        # ========================================
+        # 載入資料
+        # ========================================
         sales_filename = session.get('sales_filename')
         if not sales_filename:
             return jsonify({'success': False, 'error': '請先上傳銷貨資料'}), 400
@@ -427,6 +558,7 @@ def calculate():
         sales_data = load_sales_data(sales_path)
         logger.info(f"✅ 銷貨資料載入完成")
 
+        # 單價資料（選填）
         price_data = None
         price_filename = session.get('price_filename')
         if price_filename:
@@ -438,7 +570,10 @@ def calculate():
                     logger.info(f"✅ 單價資料載入完成")
                 except Exception as e:
                     logger.warning(f"⚠️  載入單價資料失敗：{e}")
+        else:
+            logger.info(f"ℹ️  未提供單價資料，將使用數量進行 ABC 分類")
 
+        # 庫存計劃（選填）
         plan_data = None
         plan_filename = session.get('plan_filename')
         if plan_filename:
@@ -450,6 +585,9 @@ def calculate():
                 except Exception as e:
                     logger.warning(f"⚠️  載入計劃資料失敗：{e}")
 
+        # ========================================
+        # 執行計算
+        # ========================================
         calculator = SafetyStockCalculator()
 
         if calc_mode == 'compare':
@@ -458,7 +596,8 @@ def calculate():
             comparison_data = calculate_comparison_mode(
                 calculator, sales_data, price_data, plan_data,
                 selected_months, min_months, lead_time,
-                enable_outlier, enable_ma, ma_window
+                enable_outlier, enable_ma, ma_window,
+                z_scores, abc_thresholds  # ✅ v4.3.4 新增參數
             )
 
             session['calculation_results'] = pickle.dumps(comparison_data['all'][0])
@@ -503,6 +642,8 @@ def calculate():
                 enable_outlier_detection=enable_outlier,
                 enable_moving_average=enable_ma,
                 ma_window=ma_window,
+                z_scores=z_scores,  # ✅ v4.3.4 新增
+                abc_thresholds=abc_thresholds,  # ✅ v4.3.4 新增
             )
 
             session['calculation_results'] = pickle.dumps(results)
@@ -512,6 +653,7 @@ def calculate():
 
             logger.info(f"✅ 單一模式計算完成")
             logger.info(f"   有效 SKU: {len(results)} 筆")
+            logger.info(f"   排除 SKU: {len(excluded)} 筆")
 
             response_data = {
                 'success': True,
@@ -875,12 +1017,12 @@ if __name__ == '__main__':
     # 本地開發環境
     if os.environ.get('FLASK_ENV') != 'production':
         print("=" * 60)
-        print("🚀 開發模式")
+        print("🚀 開發模式 v4.3.4")
         print("=" * 60)
         app.run(debug=True, port=port, host='0.0.0.0')
     else:
         # 生產環境（Render）
         print("=" * 60)
-        print("🚀 生產環境")
+        print("🚀 生產環境 v4.3.4")
         print("=" * 60)
         app.run(debug=False, port=port, host='0.0.0.0')
