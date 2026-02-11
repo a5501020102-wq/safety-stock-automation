@@ -103,11 +103,26 @@ def _calc_cv(std_dev: Any, mean_demand: Any) -> float:
     計算變異係數（Coefficient of Variation）
     CV = σ / μ
     """
-    sd = _safe_float(std_dev, 0.0)
-    mu = _safe_float(mean_demand, 0.0)
-    if mu <= 0:
+    s = _safe_float(std_dev, 0)
+    m = _safe_float(mean_demand, 0)
+    if m <= 0:
         return 0.0
-    return sd / mu
+    return s / m
+
+
+def _resolve_cv(r: Any) -> float:
+    """
+    Resolve CV from a CalculationResult using the canonical priority:
+    coefficient_of_variation → cv attr → manual σ/μ calculation.
+    """
+    cv = getattr(r, "coefficient_of_variation", None)
+    if cv is None:
+        cv = getattr(r, "cv", None)
+    if cv is None:
+        std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
+        mean_demand = _safe_float(getattr(r, "mean_demand", 0), 0)
+        cv = _calc_cv(std_dev, mean_demand)
+    return _safe_float(cv, 0.0)
 
 
 # ============================================================================
@@ -519,47 +534,39 @@ def export_to_excel(results: List[Any], excluded: List[Any], summary: Any) -> by
         raise ValueError(f"無法匯出 Excel：{str(e)}") from e
 
 
-def _write_results_sheet(writer, results: List[Any]) -> None:
-    """寫入計算結果工作表"""
-    rows = []
-    for r in results:
-        abc = _get_enum_value(getattr(r, "abc_class", ""))
-        status = _get_enum_value(getattr(r, "status", ""))
+def _result_to_row(r: Any) -> Dict[str, Any]:
+    """將單一 CalculationResult 轉為 Excel / 匯出用的 dict（共用邏輯）"""
+    mean_demand = _safe_float(getattr(r, "mean_demand", 0), 0)
+    std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
+    cv = _resolve_cv(r)
 
-        mean_demand = _safe_float(getattr(r, "mean_demand", 0), 0)
-        std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
+    return {
+        "出貨點": getattr(r, "site", ""),
+        "料號": getattr(r, "sku", ""),
+        "品名": getattr(r, "name", ""),
+        "ABC分類": _get_enum_value(getattr(r, "abc_class", "")),
+        "總需求量": _safe_float(getattr(r, "total_qty", 0), 0),
+        "總需求金額": _round(getattr(r, "total_value", 0), 2, 0.0),
+        "活躍月數": _safe_int(getattr(r, "active_months", 0), 0),
+        "月平均需求": _round(mean_demand, 2, 0.0),
+        "標準差": _round(std_dev, 2, 0.0),
+        "CV": _round(cv, 3, 0.0),
+        "安全庫存": _safe_float(getattr(r, "safety_stock", 0), 0),
+        "安全庫存金額": _round(getattr(r, "safety_stock_value", 0), 2, 0.0),
+        "再訂購點": _safe_float(getattr(r, "reorder_point", 0), 0),
+        "最大庫存": _safe_float(getattr(r, "max_inventory", 0), 0),
+        "前置期(天)": _safe_int(getattr(r, "lead_time_days", 0), 0),
+        "現有庫存": getattr(r, "current_stock", ""),
+        "庫存狀態": _get_enum_value(getattr(r, "status", "")),
+        "離群值數量": _safe_int(getattr(r, "outliers_removed", 0), 0),
+        "單價": _safe_float(getattr(r, "price", 0), 0),
+    }
 
-        # ✅ v4.2.3: 優先使用後端計算的 CV
-        cv = getattr(r, "coefficient_of_variation", None)
-        if cv is None:
-            cv = getattr(r, "cv", None)
-        if cv is None:
-            cv = _calc_cv(std_dev, mean_demand)
-        cv = _safe_float(cv, 0.0)
 
-        rows.append({
-            "出貨點": getattr(r, "site", ""),
-            "料號": getattr(r, "sku", ""),
-            "品名": getattr(r, "name", ""),
-            "ABC分類": abc,
-            "總需求量": _safe_float(getattr(r, "total_qty", 0), 0),
-            "總需求金額": _round(getattr(r, "total_value", 0), 2, 0.0),
-            "活躍月數": _safe_int(getattr(r, "active_months", 0), 0),
-            "月平均需求": _round(mean_demand, 2, 0.0),
-            "標準差": _round(std_dev, 2, 0.0),
-            "CV": _round(cv, 3, 0.0),
-            "安全庫存": _safe_float(getattr(r, "safety_stock", 0), 0),
-            "安全庫存金額": _round(getattr(r, "safety_stock_value", 0), 2, 0.0),
-            "再訂購點": _safe_float(getattr(r, "reorder_point", 0), 0),
-            "最大庫存": _safe_float(getattr(r, "max_inventory", 0), 0),
-            "前置期(天)": _safe_int(getattr(r, "lead_time_days", 0), 0),
-            "現有庫存": getattr(r, "current_stock", ""),
-            "庫存狀態": status,
-            "離群值數量": _safe_int(getattr(r, "outliers_removed", 0), 0),
-            "單價": _safe_float(getattr(r, "price", 0), 0),
-        })
-
-    pd.DataFrame(rows).to_excel(writer, sheet_name="計算結果", index=False)
+def _write_results_sheet(writer, results: List[Any], sheet_name: str = "計算結果") -> None:
+    """寫入計算結果工作表（支援自訂工作表名稱）"""
+    rows = [_result_to_row(r) for r in results]
+    pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
 
 
 def _write_excluded_sheet(writer, excluded: List[Any]) -> None:
@@ -817,14 +824,14 @@ def export_comparison_to_excel(
             # Sheet 2: 分倉計算
             # ========================================
             if results_all:
-                _write_results_sheet_custom(writer, results_all, "分倉計算")
+                _write_results_sheet(writer, results_all, "分倉計算")
                 logger.info(f"✅ Sheet 2: 分倉計算 - {len(results_all)} 筆")
 
             # ========================================
             # Sheet 3: 總倉計算
             # ========================================
             if results_total:
-                _write_results_sheet_custom(writer, results_total, "總倉計算")
+                _write_results_sheet(writer, results_total, "總倉計算")
                 logger.info(f"✅ Sheet 3: 總倉計算 - {len(results_total)} 筆")
 
             # ========================================
@@ -903,46 +910,7 @@ def export_comparison_to_excel(
         raise ValueError(f"無法匯出對比分析：{str(e)}") from e
 
 
-def _write_results_sheet_custom(writer, results: List[Any], sheet_name: str) -> None:
-    """自訂工作表名稱的結果寫入"""
-    rows = []
-    for r in results:
-        abc = _get_enum_value(getattr(r, "abc_class", ""))
-        status = _get_enum_value(getattr(r, "status", ""))
-
-        mean_demand = _safe_float(getattr(r, "mean_demand", 0), 0)
-        std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
-
-        cv = getattr(r, "coefficient_of_variation", None)
-        if cv is None:
-            cv = getattr(r, "cv", None)
-        if cv is None:
-            cv = _calc_cv(std_dev, mean_demand)
-        cv = _safe_float(cv, 0.0)
-
-        rows.append({
-            "出貨點": getattr(r, "site", ""),
-            "料號": getattr(r, "sku", ""),
-            "品名": getattr(r, "name", ""),
-            "ABC分類": abc,
-            "總需求量": _safe_float(getattr(r, "total_qty", 0), 0),
-            "總需求金額": _round(getattr(r, "total_value", 0), 2, 0.0),
-            "活躍月數": _safe_int(getattr(r, "active_months", 0), 0),
-            "月平均需求": _round(mean_demand, 2, 0.0),
-            "標準差": _round(std_dev, 2, 0.0),
-            "CV": _round(cv, 3, 0.0),
-            "安全庫存": _safe_float(getattr(r, "safety_stock", 0), 0),
-            "安全庫存金額": _round(getattr(r, "safety_stock_value", 0), 2, 0.0),
-            "再訂購點": _safe_float(getattr(r, "reorder_point", 0), 0),
-            "最大庫存": _safe_float(getattr(r, "max_inventory", 0), 0),
-            "前置期(天)": _safe_int(getattr(r, "lead_time_days", 0), 0),
-            "現有庫存": getattr(r, "current_stock", ""),
-            "庫存狀態": status,
-            "離群值數量": _safe_int(getattr(r, "outliers_removed", 0), 0),
-            "單價": _safe_float(getattr(r, "price", 0), 0),
-        })
-
-    pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
+# _write_results_sheet_custom removed — consolidated into _write_results_sheet(sheet_name=...)
 
 
 # ============================================================================
@@ -1014,16 +982,8 @@ def _serialize_results(results: List[Any]) -> List[Dict[str, Any]]:
         std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
         safety_stock = _safe_float(getattr(r, "safety_stock", 0), 0)
 
-        # 🔴 FIX #1: CV - 正確的欄位名順序
-        cv = getattr(r, "coefficient_of_variation", None)
-        if cv is None:
-            cv = getattr(r, "cv", None)
-        if cv is None:
-            cv = _calc_cv(std_dev, mean_demand)
-            logger.debug(f"SKU {sku}: CV 由前端計算 = {cv:.4f}")
-        else:
-            logger.debug(f"SKU {sku}: CV 從後端讀取 = {cv:.4f}")
-        cv = _safe_float(cv, 0.0)
+        # ✅ CV resolution via shared helper
+        cv = _resolve_cv(r)
 
         # === 月數 ===
         active_months = _safe_int(getattr(r, "active_months", 0), 0)

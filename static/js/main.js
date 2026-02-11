@@ -825,82 +825,29 @@ function createSapMM17PopupMenu() {
     return;
   }
 
-  // 設置樣式
-  popup.style.cssText = `
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 9999999;
-    background: white;
-    border: 6px solid #28a745;
-    border-radius: 16px;
-    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
-    padding: 40px;
-    min-width: 450px;
-    text-align: center;
-  `;
+  // 設置樣式（使用 CSS 類別，避免大量 inline style）
+  popup.className = 'sap-popup-overlay';
 
   // 創建內容
   popup.innerHTML = `
-    <div style="font-size: 28px; font-weight: bold; margin-bottom: 12px; color: #28a745;">
+    <div class="sap-popup-title">
       📤 SAP MM17 匯出
     </div>
-    <div style="font-size: 14px; color: #666; margin-bottom: 8px;">
+    <div class="sap-popup-subtitle">
       格式：MATNR, WERKS, EISBE
     </div>
-    <div style="font-size: 12px; color: #999; margin-bottom: 28px;">
+    <div class="sap-popup-hint">
       （正確的 SAP MM17 格式）
     </div>
-    <button id="sapPopupXlsxBtn" type="button" style="
-      display: block;
-      width: 100%;
-      padding: 20px;
-      margin-bottom: 16px;
-      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-      color: white;
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
-      font-size: 18px;
-      font-weight: bold;
-      box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
-      transition: all 0.3s;
-    ">
-      <i class="fas fa-file-excel" style="margin-right: 8px;"></i>
+    <button id="sapPopupXlsxBtn" type="button" class="sap-popup-btn sap-popup-btn-xlsx">
+      <i class="fas fa-file-excel"></i>
       📊 XLSX 格式
     </button>
-    <button id="sapPopupCsvBtn" type="button" style="
-      display: block;
-      width: 100%;
-      padding: 20px;
-      margin-bottom: 20px;
-      background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
-      color: white;
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
-      font-size: 18px;
-      font-weight: bold;
-      box-shadow: 0 4px 12px rgba(23, 162, 184, 0.3);
-      transition: all 0.3s;
-    ">
-      <i class="fas fa-file-csv" style="margin-right: 8px;"></i>
+    <button id="sapPopupCsvBtn" type="button" class="sap-popup-btn sap-popup-btn-csv">
+      <i class="fas fa-file-csv"></i>
       📄 CSV 格式
     </button>
-    <button id="sapPopupCancelBtn" type="button" style="
-      display: block;
-      width: 100%;
-      padding: 12px;
-      background: transparent;
-      color: #6c757d;
-      border: 2px solid #dee2e6;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 14px;
-      transition: all 0.2s;
-    ">
+    <button id="sapPopupCancelBtn" type="button" class="sap-popup-btn-cancel">
       取消
     </button>
   `;
@@ -1042,14 +989,18 @@ function initSearch() {
   const searchInput = document.getElementById('searchInput');
   if (!searchInput) return;
 
+  let searchTimer = null;
   searchInput.addEventListener('input', (e) => {
-    AppState.searchTerm = e.target.value;
-    AppState.currentPage = 1;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      AppState.searchTerm = e.target.value;
+      AppState.currentPage = 1;
 
-    if (AppState.calculationResult) {
-      const data = AppState.calculationResult.results || [];
-      renderResultsTable(data);
-    }
+      if (AppState.calculationResult) {
+        const data = AppState.calculationResult.results || [];
+        renderResultsTable(data);
+      }
+    }, 300);
   });
 }
 
@@ -1070,11 +1021,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   console.log('✅ 主初始化完成');
 
-  // ✅ 延遲綁定 SAP MM17 事件（確保 DOM 完全載入）
-  setTimeout(() => {
-    console.log('⏰ 延遲 500ms 後初始化 SAP MM17 功能');
-    bindSapMM17Events();
-  }, 500);
+  // ✅ 綁定 SAP MM17 事件（DOMContentLoaded 已保證 DOM 就緒）
+  bindSapMM17Events();
 
   console.log('✅ main.js v4.3.4 已載入 - Z-scores 修復版');
 });

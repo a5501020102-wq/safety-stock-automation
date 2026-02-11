@@ -21,6 +21,15 @@ class Config:
 
     Loads settings from YAML file and provides typed access to configuration values.
     Supports environment variable overrides for sensitive data.
+
+    Warning:
+        This is a singleton. Property accessors (``paths``, ``calculation``, etc.)
+        return **mutable** references to the internal config dict.  If you need to
+        modify the returned dict without affecting global state, make a copy first::
+
+            import copy
+            my_paths = copy.deepcopy(config.paths)
+
     """
 
     _instance: "Config | None" = None

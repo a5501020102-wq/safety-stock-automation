@@ -493,24 +493,35 @@ class SafetyStockCalculator:
 
         errors = []
 
-        for idx, row in df.iterrows():
-            sku = row.get("sku")
-            if pd.isna(sku) or str(sku).strip() == "":
+        # Vectorized validation (avoid iterrows for performance)
+        sku_series = df["sku"]
+        empty_sku_mask = sku_series.isna() | (sku_series.astype(str).str.strip() == "")
+        if empty_sku_mask.any():
+            for idx in df.index[empty_sku_mask][:10]:
                 errors.append(f"第 {idx} 列: SKU 為空")
-                continue
 
-            try:
-                qty = float(row.get("quantity", 0))
-                if qty < 0:
-                    errors.append(f"第 {idx} 列: 數量為負數 ({qty})")
-            except (ValueError, TypeError):
-                errors.append(f"第 {idx} 列: 數量格式無效 ({row.get('quantity')})")
+        qty_numeric = pd.to_numeric(df["quantity"], errors="coerce")
+        invalid_qty_mask = qty_numeric.isna() & ~df["quantity"].isna()
+        if invalid_qty_mask.any():
+            for idx in df.index[invalid_qty_mask][:10]:
+                errors.append(f"第 {idx} 列: 數量格式無效 ({df.at[idx, 'quantity']})")
 
-            year_month = row.get("year_month")
-            if pd.isna(year_month):
+        negative_qty_mask = qty_numeric.fillna(0) < 0
+        if negative_qty_mask.any():
+            for idx in df.index[negative_qty_mask][:10]:
+                errors.append(f"第 {idx} 列: 數量為負數 ({df.at[idx, 'quantity']})")
+
+        ym_series = df["year_month"]
+        empty_ym_mask = ym_series.isna()
+        if empty_ym_mask.any():
+            for idx in df.index[empty_ym_mask][:10]:
                 errors.append(f"第 {idx} 列: year_month 為空")
-            elif not isinstance(year_month, str) or "-" not in str(year_month):
-                errors.append(f"第 {idx} 列: year_month 格式無效 ({year_month}),應為 'YYYY-MM'")
+
+        valid_ym = ym_series.dropna()
+        bad_format_mask = ~valid_ym.astype(str).str.contains("-", na=False)
+        if bad_format_mask.any():
+            for idx in valid_ym.index[bad_format_mask][:10]:
+                errors.append(f"第 {idx} 列: year_month 格式無效 ({df.at[idx, 'year_month']}),應為 'YYYY-MM'")
 
         if errors:
             error_summary = "\n".join(errors[:10])

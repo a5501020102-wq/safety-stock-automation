@@ -5,6 +5,7 @@ Safety Stock Automation - Flask Application
 Version: 4.3.4
 Author: 松鼠
 Last Updated: 2026-01-29
+Last Updated: 2026-01-29
 
 🔧 v4.3.4 功能增強：
 - ✅ 新增 z_scores 參數支援（前端服務水準設定生效）

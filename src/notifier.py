@@ -449,9 +449,23 @@ class NotificationManager:
     """
 
     def __init__(self):
-        """Initialize notification manager with all channels."""
-        self.email = EmailNotifier()
-        self.line = LineNotifier()
+        """Initialize notification manager (backends created lazily)."""
+        self._email: EmailNotifier | None = None
+        self._line: LineNotifier | None = None
+
+    @property
+    def email(self) -> EmailNotifier:
+        """Lazily create EmailNotifier on first access."""
+        if self._email is None:
+            self._email = EmailNotifier()
+        return self._email
+
+    @property
+    def line(self) -> LineNotifier:
+        """Lazily create LineNotifier on first access."""
+        if self._line is None:
+            self._line = LineNotifier()
+        return self._line
 
     def notify_calculation_complete(
             self,
