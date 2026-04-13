@@ -598,7 +598,8 @@ def calculate():
                 calculator, sales_data, price_data, plan_data,
                 selected_months, min_months, lead_time,
                 enable_outlier, enable_ma, ma_window,
-                z_scores, abc_thresholds  # ✅ v4.3.4 新增參數
+                z_scores, abc_thresholds,
+                max_date=sales_data.max_date,
             )
 
             session['calculation_results'] = pickle.dumps(comparison_data['all'][0])
@@ -643,8 +644,9 @@ def calculate():
                 enable_outlier_detection=enable_outlier,
                 enable_moving_average=enable_ma,
                 ma_window=ma_window,
-                z_scores=z_scores,  # ✅ v4.3.4 新增
-                abc_thresholds=abc_thresholds,  # ✅ v4.3.4 新增
+                z_scores=z_scores,
+                abc_thresholds=abc_thresholds,
+                max_date=sales_data.max_date,
             )
 
             session['calculation_results'] = pickle.dumps(results)

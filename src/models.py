@@ -23,6 +23,7 @@ Exports:
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -312,6 +313,7 @@ class SalesData:
     has_price_data: bool
     record_count: int
     skipped_date_count: int = 0
+    max_date: datetime | None = None
 
 
 @dataclass

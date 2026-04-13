@@ -251,7 +251,7 @@ def load_sales_data(file_path: str | Path) -> SalesData:
             _normalize_string_col(df, "name")
 
         # Step 5: Process date column (vectorized)
-        df, skipped_count = _process_date_column_vectorized(df)
+        df, skipped_count, max_date = _process_date_column_vectorized(df)
 
         # Step 6: Get available sites
         available_sites = df["site"].unique().tolist()
@@ -274,6 +274,8 @@ def load_sales_data(file_path: str | Path) -> SalesData:
             date_range = f"{df['year_month'].min()} ~ {df['year_month'].max()}"
             logger.info(f"📊 資料範圍: {date_range}")
             logger.info(f"📦 SKU 數量: {df['sku'].nunique()} 個")
+            if max_date:
+                logger.info(f"📅 資料最大日期: {max_date.strftime('%Y-%m-%d')}")
 
         return SalesData(
             df=df,
@@ -282,6 +284,7 @@ def load_sales_data(file_path: str | Path) -> SalesData:
             has_price_data=has_price_data,
             record_count=len(df),
             skipped_date_count=skipped_count,
+            max_date=max_date,
         )
 
     except Exception as e:
@@ -289,11 +292,12 @@ def load_sales_data(file_path: str | Path) -> SalesData:
         raise DataLoadError(f"載入銷貨資料失敗: {e}") from e
 
 
-def _process_date_column_vectorized(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+def _process_date_column_vectorized(df: pd.DataFrame) -> tuple[pd.DataFrame, int, datetime | None]:
     """
     Vectorized date processing:
     - Try normal pd.to_datetime first
     - If many NaT and source looks numeric, try Excel-serial conversion
+    - Returns (df, skipped_count, max_date)
     """
     try:
         original_count = len(df)
@@ -316,6 +320,12 @@ def _process_date_column_vectorized(df: pd.DataFrame) -> tuple[pd.DataFrame, int
                     parsed = parsed2
                     logger.debug("✅ 日期欄位判定為 Excel serial number，已套用 origin+unit 解析")
 
+        # Extract max_date before converting to year_month
+        max_date = None
+        valid_dates = parsed.dropna()
+        if len(valid_dates) > 0:
+            max_date = valid_dates.max().to_pydatetime()
+
         df = df.copy()
         df["year_month"] = parsed.dt.strftime("%Y-%m")
 
@@ -323,17 +333,18 @@ def _process_date_column_vectorized(df: pd.DataFrame) -> tuple[pd.DataFrame, int
         df = df[df["year_month"].notna()].copy()
 
         logger.debug(f"✅ 向量化日期處理: {original_count} → {len(df)} 筆有效")
-        return df, skipped_count
+        return df, skipped_count, max_date
 
     except Exception as e:
         logger.warning(f"⚠️ 向量化日期處理失敗，使用備用方案: {e}")
         return _process_date_column_fallback(df)
 
 
-def _process_date_column_fallback(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+def _process_date_column_fallback(df: pd.DataFrame) -> tuple[pd.DataFrame, int, datetime | None]:
     """Fallback date processing (row by row)"""
     skipped_count = 0
     year_months: list[str | None] = []
+    max_date: datetime | None = None
 
     for idx, row in df.iterrows():
         date_val = row["date"]
@@ -356,6 +367,8 @@ def _process_date_column_fallback(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
                 continue
 
             year_months.append(f"{dt.year}-{dt.month:02d}")
+            if max_date is None or dt > max_date:
+                max_date = dt
 
         except Exception as e:
             logger.debug(f"第 {idx} 列日期格式無效: {date_val} ({e})")
@@ -365,7 +378,7 @@ def _process_date_column_fallback(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     df = df.copy()
     df["year_month"] = year_months
     df = df[df["year_month"].notna()].copy()
-    return df, skipped_count
+    return df, skipped_count, max_date
 
 
 def _clean_sales_data(df: pd.DataFrame) -> pd.DataFrame:

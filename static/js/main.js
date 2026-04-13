@@ -29,6 +29,7 @@ const AppState = {
   calculationResult: null,
   currentMode: null,
   currentFilter: 'all',
+  currentSiteFilter: 'all',
   currentPage: 1,
   itemsPerPage: 50,
   searchTerm: ''
@@ -572,11 +573,11 @@ function renderStandardView(result) {
     if (el) el.textContent = value || 0;
   };
 
-  updateStat('statProducts', summary.products || data.length);
-  updateStat('statShortage', summary.shortage || 0);
-  updateStat('statHealthy', summary.healthy || 0);
-  updateStat('statOverstock', summary.overstock || 0);
-  updateStat('statExcluded', result.excluded?.length || 0);
+  updateStat('statProducts', summary.total_skus || data.length);
+  updateStat('statShortage', summary.shortage_risk_count || 0);
+  updateStat('statHealthy', summary.healthy_count || 0);
+  updateStat('statOverstock', summary.overstock_risk_count || 0);
+  updateStat('statExcluded', summary.excluded_count || result.excluded?.length || 0);
 
   // 移動平均資訊
   if (result.ma_info) {
@@ -596,7 +597,7 @@ function renderStandardView(result) {
 }
 
 /**
- * 渲染結果表格
+ * 渲染結果表格（含分頁和出貨點篩選）
  */
 function renderResultsTable(data) {
   const tbody = document.querySelector('#resultsTable tbody');
@@ -604,11 +605,22 @@ function renderResultsTable(data) {
 
   tbody.innerHTML = '';
 
+  // 出貨點篩選
+  initSiteFilter(data);
+
   const filteredData = filterData(data);
+  const totalItems = filteredData.length;
+  const totalPages = Math.ceil(totalItems / AppState.itemsPerPage);
+
+  if (AppState.currentPage > totalPages && totalPages > 0) {
+    AppState.currentPage = totalPages;
+  }
+
   const paginatedData = paginateData(filteredData);
 
   if (paginatedData.length === 0) {
     tbody.innerHTML = '<tr><td colspan="12" class="text-center">暫無資料</td></tr>';
+    renderPagination(0, 0);
     return;
   }
 
@@ -616,20 +628,102 @@ function renderResultsTable(data) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${(AppState.currentPage - 1) * AppState.itemsPerPage + idx + 1}</td>
-      <td>${row['出貨點'] || row.site || '-'}</td>
-      <td>${row['料號'] || row.sku || '-'}</td>
-      <td>${row['品名'] || row.name || '-'}</td>
-      <td><span class="abc-badge ${row['ABC類別'] || row.abc_grade}">${row['ABC類別'] || row.abc_grade || '-'}</span></td>
-      <td class="text-right">${formatNumber(row['月均需求'] || row.avg_monthly_demand)}</td>
-      <td class="text-right">${formatNumber(row['標準差'] || row.std_dev)}</td>
-      <td class="text-right">${formatNumber(row['變異係數'] || row.cv, 2)}</td>
-      <td class="text-right"><strong>${formatNumber(row['安全庫存'] || row.safety_stock)}</strong></td>
-      <td class="text-right">${formatNumber(row['再訂購點'] || row.reorder_point)}</td>
-      <td class="text-right">${formatNumber(row['最大庫存'] || row.max_inventory)}</td>
+      <td>${row.site || '-'}</td>
+      <td>${row.sku || '-'}</td>
+      <td>${row.name || '-'}</td>
+      <td><span class="abc-badge ${row.abc_grade}">${row.abc_grade || '-'}</span></td>
+      <td class="text-right">${formatNumber(row.mean_demand || row.avg_monthly_demand)}</td>
+      <td class="text-right">${formatNumber(row.std_dev)}</td>
+      <td class="text-right">${formatNumber(row.cv, 2)}</td>
+      <td class="text-right"><strong>${formatNumber(row.safety_stock)}</strong></td>
+      <td class="text-right">${formatNumber(row.reorder_point)}</td>
+      <td class="text-right">${formatNumber(row.max_inventory)}</td>
       <td>-</td>
     `;
     tbody.appendChild(tr);
   });
+
+  renderPagination(totalItems, totalPages);
+}
+
+/**
+ * 初始化出貨點篩選（標準模式）
+ */
+function initSiteFilter(data) {
+  const filterRow = document.querySelector('.filter-row');
+  if (!filterRow) return;
+
+  // 只在第一次建立
+  if (document.getElementById('siteFilter')) return;
+
+  const sites = [...new Set(data.map(r => r.site).filter(Boolean))].sort();
+  if (sites.length <= 1) return;
+
+  const container = document.createElement('div');
+  container.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin-left:1rem;';
+  container.innerHTML = `
+    <label style="font-weight:600;white-space:nowrap;">出貨點：</label>
+    <select id="siteFilter" class="form-control" style="width:auto;min-width:120px;">
+      <option value="all">全部 (${data.length})</option>
+      ${sites.map(s => {
+        const count = data.filter(r => r.site === s).length;
+        return `<option value="${s}">${s} (${count})</option>`;
+      }).join('')}
+    </select>
+  `;
+  filterRow.appendChild(container);
+
+  document.getElementById('siteFilter').addEventListener('change', (e) => {
+    AppState.currentSiteFilter = e.target.value;
+    AppState.currentPage = 1;
+    renderResultsTable(data);
+  });
+}
+
+/**
+ * 渲染分頁控制項
+ */
+function renderPagination(totalItems, totalPages) {
+  let paginationEl = document.getElementById('standardPagination');
+  if (!paginationEl) {
+    const tableWrapper = document.querySelector('#resultsTableCard .table-wrapper');
+    if (!tableWrapper) return;
+    paginationEl = document.createElement('div');
+    paginationEl.id = 'standardPagination';
+    paginationEl.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:1rem 0;';
+    tableWrapper.after(paginationEl);
+  }
+
+  if (totalPages <= 1) {
+    paginationEl.innerHTML = `<div style="color:#666;">共 ${totalItems} 筆資料</div>`;
+    return;
+  }
+
+  const start = (AppState.currentPage - 1) * AppState.itemsPerPage + 1;
+  const end = Math.min(AppState.currentPage * AppState.itemsPerPage, totalItems);
+
+  let btns = '';
+  const maxShow = 5;
+  let startPage = Math.max(1, AppState.currentPage - 2);
+  let endPage = Math.min(totalPages, startPage + maxShow - 1);
+  if (endPage - startPage < maxShow - 1) startPage = Math.max(1, endPage - maxShow + 1);
+
+  for (let i = startPage; i <= endPage; i++) {
+    btns += `<button class="btn btn-sm ${i === AppState.currentPage ? 'btn-primary' : 'btn-secondary'}"
+              onclick="AppState.currentPage=${i};renderResultsTable(AppState.calculationResult.results);"
+              style="margin:0 2px;">${i}</button>`;
+  }
+
+  paginationEl.innerHTML = `
+    <div style="color:#666;">顯示 ${start}-${end} / 共 ${totalItems} 筆</div>
+    <div style="display:flex;gap:4px;align-items:center;">
+      <button class="btn btn-sm btn-secondary" ${AppState.currentPage <= 1 ? 'disabled' : ''}
+              onclick="AppState.currentPage--;renderResultsTable(AppState.calculationResult.results);">◀</button>
+      ${btns}
+      <button class="btn btn-sm btn-secondary" ${AppState.currentPage >= totalPages ? 'disabled' : ''}
+              onclick="AppState.currentPage++;renderResultsTable(AppState.calculationResult.results);">▶</button>
+    </div>
+  `;
 }
 
 /**
@@ -670,6 +764,11 @@ function initFilterTabs(data) {
 function filterData(data) {
   let filtered = data;
 
+  // 出貨點篩選
+  if (AppState.currentSiteFilter && AppState.currentSiteFilter !== 'all') {
+    filtered = filtered.filter(row => row.site === AppState.currentSiteFilter);
+  }
+
   // 狀態篩選
   if (AppState.currentFilter !== 'all') {
     filtered = filtered.filter(row => parseStatus(row) === AppState.currentFilter);
@@ -679,8 +778,8 @@ function filterData(data) {
   if (AppState.searchTerm) {
     const term = AppState.searchTerm.toLowerCase();
     filtered = filtered.filter(row => {
-      const materialNo = String(row['料號'] || row.sku || '').toLowerCase();
-      const materialName = String(row['品名'] || row.name || '').toLowerCase();
+      const materialNo = String(row.sku || '').toLowerCase();
+      const materialName = String(row.name || '').toLowerCase();
       return materialNo.includes(term) || materialName.includes(term);
     });
   }
@@ -701,12 +800,10 @@ function paginateData(data) {
  * 解析狀態
  */
 function parseStatus(row) {
-  const ss = row['安全庫存'] || row.safety_stock || 0;
-  const current = row['現有庫存'] || row.current_inventory || 0;
-  const rop = row['再訂購點'] || row.reorder_point || 0;
-
-  if (current < ss) return 'shortage';
-  if (current > rop * 1.5) return 'overstock';
+  const status = row.status;
+  if (status === 'red') return 'shortage';
+  if (status === 'blue') return 'overstock';
+  if (status === 'green') return 'healthy';
   return 'healthy';
 }
 
@@ -715,7 +812,10 @@ function parseStatus(row) {
  */
 function formatNumber(num, decimals = 0) {
   if (num === null || num === undefined || isNaN(num)) return '-';
-  return Number(num).toFixed(decimals);
+  return Number(num).toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
 }
 
 // ============================================================================

@@ -107,6 +107,7 @@ class CalculationResult:
     total_qty: float = 0.0
     total_value: float = 0.0
     active_months: int = 0
+    total_months: int = 0
     mean_demand: float = 0.0
     std_dev: float = 0.0
 
@@ -220,6 +221,9 @@ class CalculationOptions:
     # ✅ v4.2.1: 新增訂購量參數（用於計算 max_inventory）
     default_order_quantity: int = 0  # 默認訂購量（如果 = 0，則使用 safety_stock）
 
+    # v4.4.0: 資料最大日期（用於排除未完成月份）
+    max_date: datetime | None = None
+
 
 @dataclass
 class CalculationRequest:
@@ -281,10 +285,11 @@ class SafetyStockCalculator:
             min_months: int | None = None,
             lead_time_days: int | None = None,
             z_scores: dict[str, float] | None = None,
-            abc_thresholds: dict[str, float] | None = None,  # ✅ v4.3.4: 新增
+            abc_thresholds: dict[str, float] | None = None,
             enable_outlier_detection: bool | None = None,
             enable_moving_average: bool | None = None,
             ma_window: int | None = None,
+            max_date: datetime | None = None,
     ) -> tuple[list[CalculationResult], list[ExcludedItem], CalculationSummary]:
         """
         Execute the complete safety stock calculation.
@@ -310,8 +315,11 @@ class SafetyStockCalculator:
             (結果列表, 排除項目列表, 計算摘要)
         """
         logger.info("=" * 60)
-        logger.info("開始安全庫存計算 (v4.3.4)")
+        logger.info("開始安全庫存計算 (v4.4.0)")
         logger.info("=" * 60)
+
+        # Resolve max_date: prefer explicit param, fallback to sales_data
+        resolved_max_date = max_date or getattr(sales_data, 'max_date', None)
 
         # Create options with overrides
         options = self._create_options(
@@ -319,10 +327,11 @@ class SafetyStockCalculator:
             min_months=min_months,
             lead_time_days=lead_time_days,
             z_scores=z_scores,
-            abc_thresholds=abc_thresholds,  # ✅ v4.3.4: 新增
+            abc_thresholds=abc_thresholds,
             enable_outlier_detection=enable_outlier_detection,
             enable_moving_average=enable_moving_average,
             ma_window=ma_window,
+            max_date=resolved_max_date,
         )
 
         # ✅ v4.3.4: 日誌輸出參數資訊
@@ -360,10 +369,11 @@ class SafetyStockCalculator:
             min_months: int | None = None,
             lead_time_days: int | None = None,
             z_scores: dict[str, float] | None = None,
-            abc_thresholds: dict[str, float] | None = None,  # ✅ v4.3.4: 新增
+            abc_thresholds: dict[str, float] | None = None,
             enable_outlier_detection: bool | None = None,
             enable_moving_average: bool | None = None,
             ma_window: int | None = None,
+            max_date: datetime | None = None,
     ) -> CalculationOptions:
         """
         Create calculation options with overrides applied to defaults.
@@ -425,6 +435,10 @@ class SafetyStockCalculator:
         if ma_window is not None:
             options.ma_window = ma_window
             logger.debug(f"覆寫 ma_window: {ma_window}")
+
+        if max_date is not None:
+            options.max_date = max_date
+            logger.debug(f"覆寫 max_date: {max_date}")
 
         return options
 
@@ -631,17 +645,28 @@ class SafetyStockCalculator:
             timeline: dict[str, float],
             selected_months: list[int],
             fill_value: float = 0.0,
-    ) -> tuple[list[float], int]:
-        """填補缺失月份並返回完整的月度數據列表 (v4.2.0)"""
+            max_date: datetime | None = None,
+    ) -> tuple[list[float], int, int]:
+        """
+        填補缺失月份並返回完整的月度數據列表 (v4.4.0)
+
+        v4.4.0 改進：
+        - 排除未完成的最後一個月（根據 max_date 判斷）
+        - 無論是否啟用移動平均都會被呼叫
+        - 回傳值新增 total_months（完整月份數）
+
+        Returns:
+            (filled_values, missing_count, total_months)
+        """
         if not timeline:
-            return [], 0
+            return [], 0, 0
 
         try:
-            from datetime import datetime
             from dateutil.relativedelta import relativedelta
         except ImportError:
             logger.error("需要安裝 python-dateutil: pip install python-dateutil")
-            return list(timeline.values()), 0
+            sorted_values = [timeline[k] for k in sorted(timeline.keys())]
+            return sorted_values, 0, len(timeline)
 
         year_months = sorted(timeline.keys())
         start_ym = year_months[0]
@@ -652,7 +677,30 @@ class SafetyStockCalculator:
             end_date = datetime.strptime(end_ym, '%Y-%m')
         except ValueError as e:
             logger.error(f"日期格式錯誤: {e}, 跳過填補")
-            return list(timeline.values()), 0
+            return list(timeline.values()), 0, len(timeline)
+
+        # v4.4.0: 排除未完成的最後一個月
+        # 判斷邏輯：如果 max_date 不是該月的最後一天，則該月視為未完成
+        if max_date is not None:
+            import calendar
+            last_day_of_max_month = calendar.monthrange(max_date.year, max_date.month)[1]
+            max_month_is_complete = (max_date.day >= last_day_of_max_month)
+
+            if not max_month_is_complete:
+                incomplete_ym = f"{max_date.year}-{max_date.month:02d}"
+                # 把 end_date 退到上一個月
+                if end_ym == incomplete_ym:
+                    end_date = end_date - relativedelta(months=1)
+                    logger.info(
+                        f"📅 排除未完成月份: {incomplete_ym} "
+                        f"(max_date={max_date.strftime('%Y-%m-%d')}, "
+                        f"月末={last_day_of_max_month}日)"
+                    )
+
+        # 如果排除後 end < start，說明只有一個未完成月份的資料
+        if end_date < start_date:
+            logger.warning("⚠️ 排除未完成月份後無完整月份資料")
+            return [], 0, 0
 
         all_months = []
         current = start_date
@@ -672,7 +720,8 @@ class SafetyStockCalculator:
                 filled_values.append(fill_value)
                 missing_count += 1
 
-        return filled_values, missing_count
+        total_months = len(all_months)
+        return filled_values, missing_count, total_months
 
     def _apply_moving_average(
             self,
@@ -685,11 +734,7 @@ class SafetyStockCalculator:
             logger.debug(f"樣本數不足 ({len(values)} < {min_periods})，跳過移動平均")
             return values
 
-        if window >= len(values):
-            logger.debug(f"窗口大小 ({window}) >= 樣本數 ({len(values)})，使用全部數據平均")
-            mean_val = sum(values) / len(values)
-            return [mean_val] * len(values)
-
+        # 當窗口 >= 樣本數時，仍使用 rolling 正常處理（不再替換為全域平均）
         try:
             import pandas as pd
             series = pd.Series(values)
@@ -742,39 +787,36 @@ class SafetyStockCalculator:
             aggregated: dict[str, dict[str, Any]],
             options: CalculationOptions,
     ) -> list[dict[str, Any]]:
-        """Calculate demand statistics for each item. v4.2.0: 整合移動平均功能"""
+        """
+        Calculate demand statistics for each item.
+
+        v4.4.0 改進：
+        - 始終呼叫 _fill_missing_months() 填補零出貨月份
+        - 排除未完成的最後一個月（透過 options.max_date）
+        - 新增 total_months 欄位（完整月份數，含補零）
+        """
         items = []
 
         for key, item in aggregated.items():
-            if options.enable_moving_average and options.ma_fill_missing:
-                filled_values, missing_count = self._fill_missing_months(
-                    item["timeline"],
-                    options.selected_months,
-                    options.ma_fill_value
+            # v4.4.0: 始終填補缺失月份（含排除未完成月）
+            filled_values, missing_count, total_months = self._fill_missing_months(
+                item["timeline"],
+                options.selected_months,
+                fill_value=0.0,
+                max_date=options.max_date,
+            )
+
+            if missing_count > 0:
+                logger.debug(
+                    f"{item['sku']}: 填補了 {missing_count} 個缺失月份 "
+                    f"(完整月數={total_months})"
                 )
 
-                if missing_count > 0:
-                    logger.debug(
-                        f"{item['sku']}: 填補了 {missing_count} 個缺失月份"
-                    )
+            monthly_values = filled_values
+            # total_qty 使用原始 timeline 全部銷量（含未完成月），確保 ABC 分類正確
+            total_qty = sum(item["timeline"].values())
 
-                monthly_values = filled_values
-                total_qty = sum(monthly_values)
-
-            else:
-                monthly_values = []
-                total_qty = 0.0
-
-                for time_key, qty in item["timeline"].items():
-                    try:
-                        month = int(time_key.split("-")[1])
-                        if month in options.selected_months:
-                            monthly_values.append(qty)
-                            total_qty += qty
-                    except (IndexError, ValueError):
-                        logger.warning(f"無效的 year_month 格式: {time_key}")
-                        continue
-
+            # 移動平均（如果啟用）
             if options.enable_moving_average and len(monthly_values) > 0:
                 smoothed_values = self._apply_moving_average(
                     monthly_values,
@@ -797,6 +839,7 @@ class SafetyStockCalculator:
                 "monthly_values": monthly_values,
                 "smoothed_values": smoothed_values if options.enable_moving_average else monthly_values,
                 "active_months": active_months,
+                "total_months": total_months,
                 "total_qty": total_qty,
                 "total_value": total_qty * item["price"],
                 "mean": stats.mean,
@@ -1061,6 +1104,7 @@ class SafetyStockCalculator:
                 total_qty=item["total_qty"],
                 total_value=item["total_value"],
                 active_months=item["active_months"],
+                total_months=item.get("total_months", item["active_months"]),
                 mean_demand=mean_demand,
                 std_dev=std_dev,
                 coefficient_of_variation=coefficient_of_variation,  # ✅ 新增

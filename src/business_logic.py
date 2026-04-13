@@ -140,8 +140,9 @@ def calculate_comparison_mode(
         enable_outlier: bool = True,
         enable_ma: bool = False,
         ma_window: int = 3,
-        z_scores: Optional[Dict[str, float]] = None,          # ✅ v4.3.4 新增
-        abc_thresholds: Optional[Dict[str, float]] = None     # ✅ v4.3.4 新增
+        z_scores: Optional[Dict[str, float]] = None,
+        abc_thresholds: Optional[Dict[str, float]] = None,
+        max_date: Any = None,
 ) -> Dict[str, Any]:
     """
     對比模式：同時計算分倉(all)與總倉(total)
@@ -217,8 +218,9 @@ def calculate_comparison_mode(
             enable_outlier_detection=enable_outlier,
             enable_moving_average=enable_ma,
             ma_window=ma_window,
-            z_scores=z_scores,              # ✅ v4.3.4 傳遞
-            abc_thresholds=abc_thresholds,  # ✅ v4.3.4 傳遞
+            z_scores=z_scores,
+            abc_thresholds=abc_thresholds,
+            max_date=max_date,
         )
         logger.info(f"   ✅ 分倉計算完成: {len(results_all)} 筆")
 
@@ -237,8 +239,9 @@ def calculate_comparison_mode(
             enable_outlier_detection=enable_outlier,
             enable_moving_average=enable_ma,
             ma_window=ma_window,
-            z_scores=z_scores,              # ✅ v4.3.4 傳遞
-            abc_thresholds=abc_thresholds,  # ✅ v4.3.4 傳遞
+            z_scores=z_scores,
+            abc_thresholds=abc_thresholds,
+            max_date=max_date,
         )
         logger.info(f"   ✅ 總倉計算完成: {len(results_total)} 筆")
 
@@ -1046,6 +1049,7 @@ def _serialize_results(results: List[Any]) -> List[Dict[str, Any]]:
             "total_qty": _safe_float(getattr(r, "total_qty", 0), 0),
             "total_value": round(_safe_float(getattr(r, "total_value", 0), 0), 2),
             "active_months": active_months,
+            "total_months": _safe_int(getattr(r, "total_months", active_months), active_months),
             "months_count": months_count,
             "mean_demand": round(mean_demand, 2),
             "avg_monthly_demand": round(avg_monthly_demand, 2),
@@ -1066,6 +1070,9 @@ def _serialize_results(results: List[Any]) -> List[Dict[str, Any]]:
 
             # --- MA 相關 ---
             "enable_ma": bool(getattr(r, "enable_ma", False)),
+
+            # --- 月度明細（供前端展示） ---
+            "monthly_values": [round(v, 2) for v in (getattr(r, "monthly_values", []) or [])],
         })
 
     return out

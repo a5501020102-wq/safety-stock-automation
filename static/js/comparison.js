@@ -184,6 +184,7 @@
 
         abc_grade: item.abc_grade ?? item.abc_class ?? item["ABC等級"] ?? "N/A",
         lead_time_days: item.lead_time_days ?? item["前置天數"] ?? 30,
+        total_months: item.total_months ?? item.active_months ?? 0,
         months_count: item.active_months ?? item.months_count ?? item["資料月數"] ?? 0,
       };
     }
@@ -496,9 +497,14 @@
               ${mode === "all" ? `<td role="cell">${this.escapeHtml(row.site || "-")}</td>` : ""}
               <td role="cell">${this.escapeHtml(row.sku || "-")}</td>
               <td role="cell">${this.escapeHtml(row.name || "-")}</td>
-              <td class="text-right" role="cell">${this.formatNumber(row.avg_monthly_demand, 2)}</td>
-              <td class="text-right" role="cell">${this.formatNumber(row.safety_stock, 0)}</td>
+              <td role="cell"><span class="abc-badge ${row.abc_grade || ''}">${this.escapeHtml(row.abc_grade || row.abc_class || "-")}</span></td>
+              <td class="text-right" role="cell">${this.formatNumber(row.avg_monthly_demand || row.mean_demand, 2)}</td>
+              <td class="text-right" role="cell">${this.formatNumber(row.std_dev, 2)}</td>
+              <td class="text-right" role="cell">${this.formatNumber(row.cv, 2)}</td>
+              <td class="text-right" role="cell"><strong>${this.formatNumber(row.safety_stock, 0)}</strong></td>
               <td class="text-right" role="cell">${this.formatNumber(row.reorder_point, 0)}</td>
+              <td class="text-right" role="cell">${this.formatNumber(row.max_inventory, 0)}</td>
+              <td class="text-right" role="cell">${row.total_months || '-'}</td>
               <td role="cell">
                 <button class="btn btn-sm btn-detail"
                         data-mode="${mode}"
@@ -535,9 +541,14 @@
       const commonHeaders = [
         { key: "sku", label: "料號" },
         { key: "name", label: "品名" },
+        { key: "abc_grade", label: "ABC" },
         { key: "avg_monthly_demand", label: "月均需求" },
+        { key: "std_dev", label: "標準差" },
+        { key: "cv", label: "CV" },
         { key: "safety_stock", label: "安全庫存" },
         { key: "reorder_point", label: "再訂購點" },
+        { key: "max_inventory", label: "最大庫存" },
+        { key: "total_months", label: "月數" },
       ];
 
       const siteHeader = { key: "site", label: "出貨點" };
@@ -747,6 +758,7 @@
         "reorder_point",
         "max_inventory",
         "lead_time_days",
+        "total_months",
         "months_count",
       ];
 
@@ -1000,16 +1012,71 @@
         return;
       }
 
+      const monthlyValues = row.monthly_values || [];
+      const monthlyHtml = monthlyValues.length > 0
+        ? `<tr><td style="color:#666;">月度出貨明細</td><td>${monthlyValues.map((v, i) => `<span style="display:inline-block;margin:2px 6px 2px 0;padding:2px 8px;background:${v > 0 ? '#e8f5e9' : '#ffebee'};border-radius:4px;font-size:13px;">第${i+1}月: ${this.formatNumber(v, 0)}</span>`).join('')}</td></tr>`
+        : '';
+
       body.innerHTML = `
-        <div style="margin-bottom:10px;">
-          <strong>Mode:</strong> ${this.escapeHtml(mode)}<br/>
-          <strong>Site:</strong> ${this.escapeHtml(row.site || "-")}<br/>
-          <strong>SKU:</strong> ${this.escapeHtml(row.sku || "-")}<br/>
-          <strong>Name:</strong> ${this.escapeHtml(row.name || "-")}
-        </div>
-        <pre style="white-space:pre-wrap; background:#f7f7f7; padding:10px; border-radius:8px; max-height:50vh; overflow:auto;">${this.escapeHtml(
-          JSON.stringify(row, null, 2)
-        )}</pre>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <tbody>
+            <tr style="background:#f0f4ff;">
+              <td style="padding:10px;font-weight:600;width:120px;border-bottom:1px solid #e0e0e0;">出貨點</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${this.escapeHtml(row.site || "-")}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">料號</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${this.escapeHtml(row.sku || "-")}</td>
+            </tr>
+            <tr style="background:#f0f4ff;">
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">品名</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${this.escapeHtml(row.name || "-")}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">ABC 等級</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;"><span class="abc-badge ${row.abc_grade || row.abc_class || ''}">${this.escapeHtml(row.abc_grade || row.abc_class || "-")}</span></td>
+            </tr>
+            <tr style="background:#fff8e1;">
+              <td colspan="2" style="padding:8px 10px;font-weight:600;color:#e65100;border-bottom:1px solid #e0e0e0;">需求統計</td>
+            </tr>
+            <tr>
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">月均需求</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${this.formatNumber(row.avg_monthly_demand || row.mean_demand, 2)}</td>
+            </tr>
+            <tr style="background:#f0f4ff;">
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">標準差</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${this.formatNumber(row.std_dev, 2)}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">變異係數 (CV)</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${this.formatNumber(row.cv, 4)}</td>
+            </tr>
+            <tr style="background:#f0f4ff;">
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">資料月數</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${row.total_months || row.months_count || '-'} 個月（有效出貨: ${row.active_months || row.months_count || '-'} 個月）</td>
+            </tr>
+            ${monthlyHtml}
+            <tr style="background:#e8f5e9;">
+              <td colspan="2" style="padding:8px 10px;font-weight:600;color:#2e7d32;border-bottom:1px solid #e0e0e0;">庫存建議</td>
+            </tr>
+            <tr>
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">安全庫存</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;font-weight:700;color:#1565c0;">${this.formatNumber(row.safety_stock, 0)}</td>
+            </tr>
+            <tr style="background:#f0f4ff;">
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">再訂購點</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${this.formatNumber(row.reorder_point, 0)}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px;font-weight:600;border-bottom:1px solid #e0e0e0;">最大庫存</td>
+              <td style="padding:10px;border-bottom:1px solid #e0e0e0;">${this.formatNumber(row.max_inventory, 0)}</td>
+            </tr>
+            <tr style="background:#f0f4ff;">
+              <td style="padding:10px;font-weight:600;">前置天數</td>
+              <td style="padding:10px;">${row.lead_time_days || 30} 天</td>
+            </tr>
+          </tbody>
+        </table>
       `;
 
       modal.style.display = "block";
