@@ -13,6 +13,9 @@ uploads/
 cache/
 data/
 
+# v5.0.0 stateless API temp storage
+temp_uploads/
+
 # 日誌
 *.log
 logs/

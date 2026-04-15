@@ -1,643 +1,620 @@
 """
-安全庫存自動化系統 - Flask 應用（v4.3.4 - Z-scores 參數支援）
-Safety Stock Automation - Flask Application
+Safety Stock Automation - Flask API (v5.0.0, Stateless)
 
-Version: 4.3.4
+Major change from v4.4.0:
+- Removed Flask session + pickle. Fully stateless JSON API.
+- Upload returns a file_id; subsequent calls reference it.
+- Calculate returns full payload (including parameters snapshot).
+- Export receives results in request body (no server state).
+- All response keys converted to camelCase at the boundary.
+- CORS enabled for local dev (localhost:3000) and Vercel Preview URLs.
+- Legacy Jinja UI preserved at /legacy during migration.
+
+Endpoints:
+    GET  /                           API health check
+    GET  /legacy                     Legacy Jinja UI
+    POST /api/upload/<file_type>     Upload sales/price/plan file
+    POST /api/calculate              Run safety stock calculation
+    POST /api/export/excel           Generate Excel export
+    POST /api/export/sap             Generate SAP MM17 export
+    POST /api/ma-detail              Compute moving average detail (pure function)
+
 Author: 松鼠
-Last Updated: 2026-01-29
-Last Updated: 2026-01-29
-
-🔧 v4.3.4 功能增強：
-- ✅ 新增 z_scores 參數支援（前端服務水準設定生效）
-- ✅ 新增 abc_thresholds 參數支援（可自訂 ABC 分類門檻）
-- ✅ 優化參數驗證和錯誤處理
-- ✅ 增強日誌輸出（顯示服務水準和 ABC 門檻）
-- ✅ 向後兼容（沒有傳參數時使用預設值）
-
-修改內容：
-- calculate() API：接收並傳遞 z_scores 和 abc_thresholds
-- 對比模式：同步支援新參數
-- 日誌：顯示完整的計算參數
-- 驗證：確保參數格式正確
+Version: 5.0.0
+Last Updated: 2026-04-15
 """
 
-from flask import Flask, render_template, request, jsonify, send_file, session
-from flask_session import Session
-from werkzeug.utils import secure_filename
-import os
-from pathlib import Path
-import json
-from datetime import datetime
-import traceback
-import logging
-import pickle
-from typing import Optional, Dict, Any, Tuple, List
-import pandas as pd
-import io
+from __future__ import annotations
 
-# ============================================================================
-# 日誌配置
-# ============================================================================
+import calendar
+import io
+import logging
+import os
+import re
+import sys
+import time
+import traceback
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import pandas as pd
+from flask import Flask, jsonify, render_template, request, send_file
+from flask_cors import CORS
+from werkzeug.exceptions import RequestEntityTooLarge
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('app.log', encoding='utf-8')
-    ]
+        logging.FileHandler("app.log", encoding="utf-8"),
+    ],
 )
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# 路徑設定
-# ============================================================================
-
-import sys
+# ---------------------------------------------------------------------------
+# Path setup
+# ---------------------------------------------------------------------------
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-# ============================================================================
-# 導入核心模組
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Core modules
+# ---------------------------------------------------------------------------
 
 MODULES_AVAILABLE = False
-
 try:
-    from src.calculator import SafetyStockCalculator
-    from src.data_loader import load_sales_data, load_price_data, load_plan_data, DataLoadError
     from src.business_logic import (
         calculate_comparison_mode,
-        get_ma_detail_for_sku,
+        export_comparison_to_excel,
         export_to_excel,
         export_to_sap_mm17,
-        export_comparison_to_excel,
-        serialize_results_for_json
+        serialize_results_for_json,
+    )
+    from src.calculator import SafetyStockCalculator
+    from src.case_converter import keys_to_camel
+    from src.data_loader import (
+        DataLoadError,
+        load_plan_data,
+        load_price_data,
+        load_sales_data,
+    )
+    from src.error_codes import ErrorCode, error_response, make_error
+    from src.temp_manager import (
+        ALLOWED_EXTENSIONS,
+        cleanup_temp_files,
+        find_file,
+        get_temp_path,
+        init_temp_dir,
+        is_allowed_extension,
     )
 
     MODULES_AVAILABLE = True
-    logger.info("✅ 核心模組載入成功")
-except ImportError as e:
-    logger.error(f"❌ 無法導入核心模組：{e}")
-    logger.warning("⚠️  部分功能將無法使用")
+    logger.info("Core modules loaded")
+except ImportError as exc:
+    logger.error(f"Failed to import core modules: {exc}")
 
-# ============================================================================
-# Flask 應用初始化
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Flask app setup
+# ---------------------------------------------------------------------------
+
+API_VERSION = "5.0.0"
+MAX_UPLOAD_MB = 50
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+app.config["JSON_AS_ASCII"] = False  # keep Chinese readable in JSON
 
-app.config.update(
-    SECRET_KEY=os.environ.get('SECRET_KEY', 'ss-automation-dev-key-change-me'),
-    SESSION_TYPE='filesystem',
-    SESSION_FILE_DIR='flask_session',
-    SESSION_PERMANENT=False,
-    SESSION_USE_SIGNER=True,
-    PERMANENT_SESSION_LIFETIME=3600,
-    UPLOAD_FOLDER='uploads',
-    CACHE_FOLDER='cache',
-    OUTPUT_FOLDER='data/output',
-    MAX_CONTENT_LENGTH=100 * 1024 * 1024,
-    ALLOWED_EXTENSIONS={'xlsx', 'xls'},
+DEBUG_MODE = os.environ.get("FLASK_ENV") == "development"
+
+# CORS: allow local dev + Vercel preview URLs. Production domains should be
+# added via the ALLOWED_ORIGINS env var (comma-separated).
+_default_origins: List[Any] = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    re.compile(r"^https://.*\.vercel\.app$"),
+]
+_env_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if _env_origins:
+    _default_origins.extend(o.strip() for o in _env_origins.split(",") if o.strip())
+
+CORS(
+    app,
+    resources={r"/api/*": {"origins": _default_origins}},
+    expose_headers=["Content-Disposition"],
+    supports_credentials=False,
+    max_age=600,
 )
 
-Session(app)
+# Initialize temp dir on startup
+if MODULES_AVAILABLE:
+    init_temp_dir("temp_uploads")
 
-DEBUG_MODE = os.environ.get('FLASK_ENV') == 'development'
-
-for folder in ['UPLOAD_FOLDER', 'CACHE_FOLDER', 'OUTPUT_FOLDER', 'SESSION_FILE_DIR']:
-    Path(app.config.get(folder, folder)).mkdir(parents=True, exist_ok=True)
-
-logger.info(f"🚀 Flask 應用初始化完成 v4.3.4")
-logger.info(f"📁 Session 存儲: {app.config['SESSION_FILE_DIR']}")
+logger.info(f"Flask API initialized (v{API_VERSION}, debug={DEBUG_MODE})")
 
 
-# ============================================================================
-# 工具函數
-# ============================================================================
+# ===========================================================================
+# Helpers
+# ===========================================================================
 
-def allowed_file(filename: str) -> bool:
-    """檢查檔案類型"""
-    return '.' in filename and \
-        filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
-
-
-def validate_upload(file) -> Tuple[bool, str]:
-    """驗證上傳檔案"""
-    if not file or file.filename == '':
-        return False, '未選擇檔案'
-
-    if not allowed_file(file.filename):
-        return False, f'不支援的檔案格式，僅支援: {", ".join(app.config["ALLOWED_EXTENSIONS"])}'
-
-    if hasattr(file, 'content_length') and file.content_length:
-        max_size = app.config['MAX_CONTENT_LENGTH']
-        if file.content_length > max_size:
-            return False, f'檔案過大（最大 {max_size // (1024 * 1024)} MB）'
-
-    return True, ''
-
-
-def save_upload_file(file, prefix: str = 'file') -> Tuple[bool, str, str]:
-    """安全保存上傳檔案"""
-    try:
-        filename = secure_filename(file.filename)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        saved_filename = f"{prefix}_{timestamp}_{filename}"
-
-        upload_dir = Path(app.config['UPLOAD_FOLDER']).resolve()
-        filepath = (upload_dir / saved_filename).resolve()
-
-        if not str(filepath).startswith(str(upload_dir)):
-            logger.error(f"🚨 路徑遍歷攻擊嘗試：{filepath}")
-            return False, '無效的檔案路徑', ''
-
-        file.save(str(filepath))
-        logger.info(f"✅ 檔案已保存：{saved_filename}")
-
-        return True, saved_filename, str(filepath)
-
-    except Exception as e:
-        logger.error(f"❌ 保存檔案失敗：{e}", exc_info=True)
-        return False, f'保存檔案失敗：{str(e)}', ''
-
-
-def get_safe_filepath(filename: str) -> Optional[str]:
-    """安全取得檔案路徑"""
-    try:
-        upload_dir = Path(app.config['UPLOAD_FOLDER']).resolve()
-        filepath = (upload_dir / filename).resolve()
-
-        if not str(filepath).startswith(str(upload_dir)):
-            logger.warning(f"⚠️  嘗試存取非法路徑：{filepath}")
-            return None
-
-        if not filepath.exists():
-            logger.warning(f"⚠️  檔案不存在：{filepath}")
-            return None
-
-        return str(filepath)
-
-    except Exception as e:
-        logger.error(f"❌ 取得檔案路徑失敗：{e}", exc_info=True)
-        return None
-
-
-def init_session():
-    """初始化 session"""
-    if 'initialized' not in session:
-        session['sales_filename'] = None
-        session['price_filename'] = None
-        session['plan_filename'] = None
-        session['calculation_results'] = None
-        session['calculation_summary'] = None
-        session['calculation_results_total'] = None
-        session['calculation_summary_total'] = None
-        session['comparison_data'] = None
-        session['sales_data'] = None
-        session['calc_mode'] = None
-        session['initialized'] = True
-        logger.debug("Session 已初始化")
-
-
-def filter_results_by_site(results: List, site_filter: Optional[str]) -> List:
+def _jsonify_success(payload: Dict[str, Any]) -> Any:
     """
-    根據出貨點篩選結果
+    Build a success response with camelCase keys.
 
-    Args:
-        results: 計算結果列表
-        site_filter: 出貨點篩選（None 或 "all" 表示不篩選）
-
-    Returns:
-        篩選後的結果列表
+    Forces success=True even if the incoming payload already has a `success`
+    key (defensive: prevents an accidental success=false from passing through).
     """
+    payload = dict(payload)  # shallow copy so caller's dict isn't mutated
+    payload.pop("success", None)
+    payload = {"success": True, **payload}
+    return jsonify(keys_to_camel(payload))
+
+
+def _jsonify_error(code: str, message: str | None = None, **extra) -> Tuple[Any, int]:
+    """Build an error response (already snake_case keys, but code is kept uppercase)."""
+    payload, status = error_response(code, message, **extra)
+    # camelCase the `detail` field etc but keep error/code as-is
+    return jsonify(payload), status
+
+
+def _validate_z_scores(z_scores: Any) -> Tuple[bool, str, Dict[str, float]]:
+    """Validate the z_scores dict shape and numeric ranges."""
+    defaults = {"A": 2.05, "B": 1.65, "C": 1.28}
+
+    if not z_scores:
+        return True, "", defaults
+    if not isinstance(z_scores, dict):
+        return False, "z_scores 必須是物件 {A, B, C}", defaults
+
+    cleaned: Dict[str, float] = {}
+    for key in ("A", "B", "C"):
+        raw = z_scores.get(key, defaults[key])
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return False, f"z_scores.{key} 必須是數字", defaults
+        if not (0.5 <= val <= 3.5):
+            return False, f"z_scores.{key} 必須介於 0.5-3.5", defaults
+        cleaned[key] = val
+    return True, "", cleaned
+
+
+def _validate_abc_thresholds(abc_thresholds: Any) -> Tuple[bool, str, Dict[str, float]]:
+    """Validate ABC threshold dict."""
+    defaults = {"A": 0.80, "B": 0.95}
+
+    if not abc_thresholds:
+        return True, "", defaults
+    if not isinstance(abc_thresholds, dict):
+        return False, "abc_thresholds 必須是物件 {A, B}", defaults
+
+    cleaned: Dict[str, float] = {}
+    for key in ("A", "B"):
+        raw = abc_thresholds.get(key, defaults[key])
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return False, f"abc_thresholds.{key} 必須是數字", defaults
+        if not (0.0 < val < 1.0):
+            return False, f"abc_thresholds.{key} 必須介於 0-1 (開區間)", defaults
+        cleaned[key] = val
+    if cleaned["A"] >= cleaned["B"]:
+        return False, "abc_thresholds.A 必須小於 B", defaults
+    return True, "", cleaned
+
+
+def _filter_results_by_site(results: List[Any], site_filter: Optional[str]) -> List[Any]:
+    """Filter a list of CalculationResult-like objects by site attribute."""
     if not site_filter or site_filter == "all":
         return results
-
-    filtered = [r for r in results if getattr(r, 'site', None) == site_filter]
-
-    logger.info(f"   出貨點篩選 [{site_filter}]: {len(results)} → {len(filtered)} 筆")
-
-    return filtered
+    return [r for r in results if getattr(r, "site", None) == site_filter]
 
 
-def validate_z_scores(z_scores: Dict[str, float]) -> Tuple[bool, str, Dict[str, float]]:
-    """
-    驗證 z_scores 參數格式和數值範圍
-
-    Args:
-        z_scores: Z-scores 字典
-
-    Returns:
-        (是否有效, 錯誤訊息, 清理後的值)
-    """
+def _parse_year_month(ym: str) -> Tuple[int, int]:
+    """Parse 'YYYY-MM' -> (year, month). Returns (0, 0) on failure."""
     try:
-        # 預設值
-        default_z_scores = {"A": 2.05, "B": 1.65, "C": 1.28}
-
-        if not z_scores or not isinstance(z_scores, dict):
-            return True, '', default_z_scores
-
-        # 驗證必要的 key
-        required_keys = ['A', 'B', 'C']
-        for key in required_keys:
-            if key not in z_scores:
-                logger.warning(f"⚠️  z_scores 缺少 key: {key}，使用預設值")
-                z_scores[key] = default_z_scores[key]
-
-        # 驗證數值範圍 (合理的 Z-score 範圍: 0.5 - 3.5)
-        cleaned = {}
-        for key in required_keys:
-            try:
-                value = float(z_scores[key])
-                if not (0.5 <= value <= 3.5):
-                    logger.warning(f"⚠️  z_scores[{key}] = {value} 超出合理範圍 [0.5, 3.5]，使用預設值")
-                    cleaned[key] = default_z_scores[key]
-                else:
-                    cleaned[key] = value
-            except (ValueError, TypeError):
-                logger.warning(f"⚠️  z_scores[{key}] 格式無效，使用預設值")
-                cleaned[key] = default_z_scores[key]
-
-        return True, '', cleaned
-
-    except Exception as e:
-        logger.error(f"❌ 驗證 z_scores 失敗：{e}")
-        return False, f'z_scores 參數格式錯誤：{str(e)}', default_z_scores
+        year, month = ym.split("-")
+        return int(year), int(month)
+    except Exception:
+        return 0, 0
 
 
-def validate_abc_thresholds(abc_thresholds: Dict[str, float]) -> Tuple[bool, str, Dict[str, float]]:
-    """
-    驗證 abc_thresholds 參數格式和邏輯
+# ===========================================================================
+# Health check
+# ===========================================================================
 
-    Args:
-        abc_thresholds: ABC 分類門檻字典
-
-    Returns:
-        (是否有效, 錯誤訊息, 清理後的值)
-    """
-    try:
-        # 預設值
-        default_thresholds = {"A": 0.80, "B": 0.95}
-
-        if not abc_thresholds or not isinstance(abc_thresholds, dict):
-            return True, '', default_thresholds
-
-        # 驗證必要的 key
-        if 'A' not in abc_thresholds or 'B' not in abc_thresholds:
-            logger.warning(f"⚠️  abc_thresholds 格式不完整，使用預設值")
-            return True, '', default_thresholds
-
-        # 驗證數值
-        try:
-            threshold_a = float(abc_thresholds['A'])
-            threshold_b = float(abc_thresholds['B'])
-        except (ValueError, TypeError):
-            logger.warning(f"⚠️  abc_thresholds 數值格式無效，使用預設值")
-            return True, '', default_thresholds
-
-        # 驗證邏輯：A < B < 1.0
-        if not (0.0 < threshold_a < threshold_b < 1.0):
-            error_msg = f'ABC 門檻邏輯錯誤：需要 0 < A({threshold_a}) < B({threshold_b}) < 1'
-            logger.error(f"❌ {error_msg}")
-            return False, error_msg, default_thresholds
-
-        # 合理範圍檢查
-        if threshold_a < 0.5 or threshold_a > 0.95:
-            logger.warning(f"⚠️  A類門檻 {threshold_a} 不在建議範圍 [0.5, 0.95]，但仍接受")
-
-        if threshold_b < 0.8 or threshold_b > 0.99:
-            logger.warning(f"⚠️  B類門檻 {threshold_b} 不在建議範圍 [0.8, 0.99]，但仍接受")
-
-        cleaned = {"A": threshold_a, "B": threshold_b}
-        return True, '', cleaned
-
-    except Exception as e:
-        logger.error(f"❌ 驗證 abc_thresholds 失敗：{e}")
-        return False, f'abc_thresholds 參數格式錯誤：{str(e)}', default_thresholds
-
-
-# ============================================================================
-# 路由：健康檢查
-# ============================================================================
-
-@app.route('/health', methods=['GET'])
-def health():
-    """健康檢查端點"""
-    return jsonify({
-        'status': 'healthy',
-        'version': '4.3.4',
-        'modules_available': MODULES_AVAILABLE,
-        'session_type': app.config['SESSION_TYPE'],
-        'timestamp': datetime.now().isoformat()
-    })
-
-
-# ============================================================================
-# 路由：頁面
-# ============================================================================
-
-@app.route('/')
+@app.route("/", methods=["GET"])
 def index():
-    """主頁"""
+    """API root — returns health info and a pointer to the legacy UI."""
+    return jsonify(keys_to_camel({
+        "status": "ok",
+        "service": "Safety Stock Automation API",
+        "version": API_VERSION,
+        "legacy_ui": "/legacy",
+        "modules_available": MODULES_AVAILABLE,
+    }))
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Lightweight liveness probe."""
+    return jsonify({"status": "ok", "version": API_VERSION})
+
+
+@app.route("/legacy", methods=["GET"])
+def legacy_ui():
+    """Legacy Jinja UI (preserved during migration to Next.js)."""
+    return render_template("index.html")
+
+
+# ===========================================================================
+# Upload
+# ===========================================================================
+
+_FILE_LOADERS: Dict[str, Any] = {
+    "sales": None,  # populated lazily below
+    "price": None,
+    "plan": None,
+}
+
+
+def _get_file_loaders() -> Dict[str, Any]:
+    """Lazy init to avoid NameError when modules aren't available."""
+    if MODULES_AVAILABLE and _FILE_LOADERS["sales"] is None:
+        _FILE_LOADERS["sales"] = load_sales_data
+        _FILE_LOADERS["price"] = load_price_data
+        _FILE_LOADERS["plan"] = load_plan_data
+    return _FILE_LOADERS
+
+
+def _build_upload_metadata(
+    file_type: str,
+    data: Any,
+    file_id: str,
+    original_name: str,
+    saved_path: Path,
+) -> Dict[str, Any]:
+    """Shape per-type metadata for the upload response."""
     try:
-        init_session()
-        return render_template('index.html')
-    except Exception as e:
-        logger.error(f"❌ 渲染首頁失敗：{e}", exc_info=True)
-        return f"系統錯誤：{str(e)}", 500
+        size_bytes = saved_path.stat().st_size
+    except OSError:
+        size_bytes = 0
+
+    base = {
+        "file_id": file_id,
+        "filename": original_name,
+        "file_size_bytes": size_bytes,
+        "uploaded_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+    if file_type == "sales":
+        df = data.df
+        return {
+            **base,
+            "record_count": int(data.record_count),
+            "detected_sites": list(data.available_sites),
+            "detected_skus": int(df["sku"].nunique()) if "sku" in df.columns else 0,
+            "date_range": {
+                "start": df["year_month"].min() if "year_month" in df.columns else None,
+                "end": df["year_month"].max() if "year_month" in df.columns else None,
+            },
+            "max_date": data.max_date.isoformat() if data.max_date else None,
+            "skipped_date_count": int(data.skipped_date_count),
+            "has_price_data": bool(data.has_price_data),
+            "has_stock_data": bool(data.has_stock_data),
+        }
+
+    if file_type == "price":
+        return {
+            **base,
+            "record_count": int(data.record_count),
+        }
+
+    if file_type == "plan":
+        return {
+            **base,
+            "item_count": len(data.items),
+            "detected_months": list(data.detected_months),
+            "has_cumulative_columns": bool(data.has_cumulative_columns),
+        }
+
+    return base
 
 
-# ============================================================================
-# 路由：API - 檔案上傳
-# ============================================================================
+@app.route("/api/upload/<file_type>", methods=["POST"])
+def upload_file(file_type: str):
+    """Upload a file, save to temp, extract metadata, return file_id."""
+    if not MODULES_AVAILABLE:
+        return _jsonify_error(ErrorCode.INTERNAL_ERROR, "核心模組未載入")
 
-@app.route('/api/upload/sales', methods=['POST'])
-def upload_sales():
-    """上傳銷貨資料"""
+    # Lazy cleanup of expired files on every upload
+    cleanup_temp_files(ttl_minutes=60)
+
+    loaders = _get_file_loaders()
+    if file_type not in loaders:
+        return _jsonify_error(ErrorCode.INVALID_FILE_TYPE)
+
+    if "file" not in request.files:
+        return _jsonify_error(ErrorCode.NO_FILE)
+
+    f = request.files["file"]
+    if not f.filename:
+        return _jsonify_error(ErrorCode.EMPTY_FILENAME)
+
+    ext = Path(f.filename).suffix.lower()
+    if not is_allowed_extension(ext):
+        return _jsonify_error(
+            ErrorCode.INVALID_EXTENSION,
+            f"僅支援 {', '.join(sorted(ALLOWED_EXTENSIONS))} 檔案",
+        )
+
+    file_id = str(uuid.uuid4())
+    save_path = get_temp_path(file_id, ext)
+
     try:
-        if not MODULES_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': '核心模組未載入，請檢查系統設定'
-            }), 500
+        f.save(str(save_path))
+    except OSError as e:
+        logger.error(f"Failed to save upload: {e}")
+        return _jsonify_error(ErrorCode.INTERNAL_ERROR, "儲存檔案失敗")
 
-        init_session()
-
-        file = request.files.get('file')
-        valid, error_msg = validate_upload(file)
-        if not valid:
-            return jsonify({'success': False, 'error': error_msg}), 400
-
-        success, result, filepath = save_upload_file(file, 'sales')
-        if not success:
-            return jsonify({'success': False, 'error': result}), 500
-
-        try:
-            logger.info(f"📂 開始載入銷貨資料：{result}")
-            sales_data = load_sales_data(filepath)
-
-            df = sales_data.df
-            sites = sorted(df['site'].unique().tolist())
-            records = len(df)
-
-            if 'year_month' in df.columns:
-                year_months = sorted([ym for ym in df['year_month'].unique() if pd.notna(ym)])
-                date_range = f"{year_months[0]} to {year_months[-1]}" if year_months else "Unknown"
-            else:
-                date_range = "Unknown"
-
-            session['sales_filename'] = result
-            logger.info(f"✅ 銷貨資料載入成功：{records} 筆，{len(sites)} 個出貨點")
-
-            return jsonify({
-                'success': True,
-                'filename': result,
-                'records': records,
-                'sites': sites,
-                'date_range': date_range
-            })
-
-        except DataLoadError as e:
-            logger.error(f"❌ 資料載入錯誤：{e}", exc_info=True)
-            return jsonify({
-                'success': False,
-                'error': f'資料格式錯誤：{str(e)}'
-            }), 400
-
-    except Exception as e:
-        logger.error(f"❌ 上傳失敗：{e}", exc_info=True)
-        response = {'success': False, 'error': '上傳失敗'}
-        if DEBUG_MODE:
-            response['detail'] = str(e)
-            response['traceback'] = traceback.format_exc()
-        return jsonify(response), 500
-
-
-@app.route('/api/upload/price', methods=['POST'])
-def upload_price():
-    """上傳單價資料"""
     try:
-        if not MODULES_AVAILABLE:
-            return jsonify({'success': False, 'error': '核心模組未載入'}), 500
-
-        init_session()
-
-        file = request.files.get('file')
-        valid, error_msg = validate_upload(file)
-        if not valid:
-            return jsonify({'success': False, 'error': error_msg}), 400
-
-        success, result, filepath = save_upload_file(file, 'price')
-        if not success:
-            return jsonify({'success': False, 'error': result}), 500
-
-        try:
-            logger.info(f"📂 開始載入單價資料：{result}")
-            price_data = load_price_data(filepath)
-            session['price_filename'] = result
-            logger.info(f"✅ 單價資料載入成功：{len(price_data.price_map)} 筆")
-
-            return jsonify({
-                'success': True,
-                'filename': result,
-                'count': len(price_data.price_map)
-            })
-        except Exception as e:
-            logger.error(f"❌ 單價資料載入失敗：{e}", exc_info=True)
-            return jsonify({'success': False, 'error': str(e)}), 400
-
-    except Exception as e:
-        logger.error(f"❌ 上傳單價資料失敗：{e}", exc_info=True)
-        return jsonify({'success': False, 'error': '上傳失敗'}), 500
+        data = loaders[file_type](save_path)
+        metadata = _build_upload_metadata(file_type, data, file_id, f.filename, save_path)
+        logger.info(
+            f"Upload OK: {file_type} {f.filename} -> {file_id} "
+            f"({metadata.get('record_count', metadata.get('item_count', 0))} items)"
+        )
+        return _jsonify_success(metadata)
+    except DataLoadError as e:
+        save_path.unlink(missing_ok=True)
+        logger.warning(f"Parse error for {f.filename}: {e}")
+        return _jsonify_error(ErrorCode.PARSE_ERROR, str(e))
+    except Exception as e:  # noqa: BLE001 - we want to catch any loader bug
+        save_path.unlink(missing_ok=True)
+        logger.exception(f"Unexpected error parsing {f.filename}")
+        extra = {"detail": str(e)} if DEBUG_MODE else {}
+        return _jsonify_error(ErrorCode.PARSE_ERROR, **extra)
 
 
-@app.route('/api/upload/plan', methods=['POST'])
-def upload_plan():
-    """上傳庫存計劃"""
-    try:
-        if not MODULES_AVAILABLE:
-            return jsonify({'success': False, 'error': '核心模組未載入'}), 500
+# ===========================================================================
+# Calculate
+# ===========================================================================
 
-        init_session()
+def _build_parameters_snapshot(
+    body: Dict[str, Any],
+    options: Any,
+    sales_data: Any,
+    filenames: Dict[str, Optional[str]],
+    execution_time_ms: float,
+) -> Dict[str, Any]:
+    """
+    Assemble the parameters snapshot for the frontend.
 
-        file = request.files.get('file')
-        valid, error_msg = validate_upload(file)
-        if not valid:
-            return jsonify({'success': False, 'error': error_msg}), 400
+    Includes resolved values (post-validation), data range, and timing.
+    """
+    # Determine excluded month (if any) — matches calculator.py logic
+    excluded_month = None
+    if sales_data.max_date is not None:
+        max_date = sales_data.max_date
+        last_day = calendar.monthrange(max_date.year, max_date.month)[1]
+        if max_date.day < last_day:
+            excluded_month = f"{max_date.year}-{max_date.month:02d}"
 
-        success, result, filepath = save_upload_file(file, 'plan')
-        if not success:
-            return jsonify({'success': False, 'error': result}), 500
+    df = sales_data.df
+    return {
+        "calc_mode": body.get("calc_mode", "all"),
+        "data_min_date": df["year_month"].min() if "year_month" in df.columns else None,
+        "data_max_date": df["year_month"].max() if "year_month" in df.columns else None,
+        "data_max_date_exact": sales_data.max_date.isoformat() if sales_data.max_date else None,
+        "excluded_month": excluded_month,
+        "selected_months": options.selected_months,
+        "lead_time_days": options.lead_time_days,
+        "min_months": options.min_months,
+        "z_scores": options.z_scores,
+        "abc_thresholds": options.abc_thresholds,
+        "enable_outlier": options.enable_outlier_detection,
+        "enable_ma": options.enable_moving_average,
+        "ma_window": options.ma_window if options.enable_moving_average else None,
+        "sales_filename": filenames.get("sales"),
+        "price_filename": filenames.get("price"),
+        "plan_filename": filenames.get("plan"),
+        "executed_at": datetime.utcnow().isoformat() + "Z",
+        "execution_time_ms": round(execution_time_ms, 1),
+    }
 
-        try:
-            logger.info(f"📂 開始載入庫存計劃：{result}")
-            plan_data = load_plan_data(filepath)
-            session['plan_filename'] = result
-            logger.info(f"✅ 庫存計劃載入成功")
 
-            return jsonify({
-                'success': True,
-                'filename': result
-            })
-        except Exception as e:
-            logger.error(f"❌ 庫存計劃載入失敗：{e}", exc_info=True)
-            return jsonify({'success': False, 'error': str(e)}), 400
+def _resolve_file(file_id: Optional[str], required_code: Optional[str] = None):
+    """
+    Resolve a file_id to a path. Returns (path, error_tuple).
 
-    except Exception as e:
-        logger.error(f"❌ 上傳庫存計劃失敗：{e}", exc_info=True)
-        return jsonify({'success': False, 'error': '上傳失敗'}), 500
+    If file_id is None and required_code is None, returns (None, None) (optional file).
+    If file_id is None and required_code is set, returns (None, (payload, status)).
+    If file_id is set but file not found, returns (None, (payload, status)).
+    """
+    if not file_id:
+        if required_code:
+            return None, _jsonify_error(required_code)
+        return None, None
+
+    path = find_file(file_id)
+    if path is None:
+        return None, _jsonify_error(
+            ErrorCode.FILE_NOT_FOUND,
+            f"檔案不存在或已過期 (id={file_id})",
+        )
+    return path, None
 
 
-# ============================================================================
-# 路由：API - 計算
-# ============================================================================
-
-@app.route('/api/calculate', methods=['POST'])
+@app.route("/api/calculate", methods=["POST"])
 def calculate():
-    """執行安全庫存計算（v4.3.4 - 支援 z_scores 和 abc_thresholds）"""
+    """Run safety stock calculation. Stateless — results returned in response."""
+    if not MODULES_AVAILABLE:
+        return _jsonify_error(ErrorCode.INTERNAL_ERROR, "核心模組未載入")
+
+    body = request.get_json(silent=True) or {}
+
+    # --- Resolve files ------------------------------------------------------
+    sales_path, err = _resolve_file(
+        body.get("salesFileId") or body.get("sales_file_id"),
+        ErrorCode.MISSING_SALES_FILE,
+    )
+    if err:
+        return err
+
+    price_path, err = _resolve_file(
+        body.get("priceFileId") or body.get("price_file_id")
+    )
+    if err:
+        return err
+
+    plan_path, err = _resolve_file(
+        body.get("planFileId") or body.get("plan_file_id")
+    )
+    if err:
+        return err
+
+    # --- Extract and validate params ---------------------------------------
+    params = body.get("params") or body  # accept either nested or flat
+    calc_mode = params.get("calc_mode") or params.get("calcMode") or "all"
+    if calc_mode not in ("all", "total", "compare", "single"):
+        return _jsonify_error(ErrorCode.INVALID_PARAMS, f"未知的計算模式: {calc_mode}")
+
+    # z_scores / abc_thresholds — accept both camel and snake from body
+    z_raw = params.get("z_scores") or params.get("zScores")
+    ok, msg, z_scores = _validate_z_scores(z_raw)
+    if not ok:
+        return _jsonify_error(ErrorCode.INVALID_PARAMS, msg)
+
+    abc_raw = params.get("abc_thresholds") or params.get("abcThresholds")
+    ok, msg, abc_thresholds = _validate_abc_thresholds(abc_raw)
+    if not ok:
+        return _jsonify_error(ErrorCode.INVALID_PARAMS, msg)
+
+    selected_months = params.get("selected_months") or params.get("selectedMonths") or list(range(1, 13))
+    if not isinstance(selected_months, list) or not all(
+        isinstance(m, int) and 1 <= m <= 12 for m in selected_months
+    ):
+        return _jsonify_error(ErrorCode.INVALID_PARAMS, "selected_months 必須是 1-12 的整數列表")
+
+    def _int_param(key_snake: str, key_camel: str, default: int, lo: int, hi: int) -> Tuple[int, Optional[Tuple]]:
+        raw = params.get(key_snake) if params.get(key_snake) is not None else params.get(key_camel)
+        if raw is None:
+            return default, None
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            return default, _jsonify_error(ErrorCode.INVALID_PARAMS, f"{key_snake} 必須是整數")
+        if not (lo <= val <= hi):
+            return default, _jsonify_error(
+                ErrorCode.INVALID_PARAMS, f"{key_snake} 必須介於 {lo}-{hi}"
+            )
+        return val, None
+
+    lead_time, err = _int_param("lead_time", "leadTime", 30, 1, 365)
+    if err:
+        return err
+    min_months, err = _int_param("min_months", "minMonths", 2, 0, 12)
+    if err:
+        return err
+    ma_window, err = _int_param("ma_window", "maWindow", 3, 2, 12)
+    if err:
+        return err
+
+    enable_outlier = bool(
+        params.get("enable_outlier", params.get("enableOutlier", True))
+    )
+    enable_ma = bool(
+        params.get("enable_ma", params.get("enableMa", False))
+    )
+
+    # --- Load data ----------------------------------------------------------
     try:
-        if not MODULES_AVAILABLE:
-            return jsonify({'success': False, 'error': '核心模組未載入'}), 500
-
-        init_session()
-
-        data = request.get_json()
-        if not data:
-            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
-
-        # ========================================
-        # 基本參數
-        # ========================================
-        calc_mode = data.get('calc_mode', 'all')
-        enable_ma = data.get('enable_ma', False)
-        ma_window = data.get('ma_window', 3)
-        lead_time = data.get('lead_time', 30)
-        min_months = data.get('min_months', 2)
-        selected_months = data.get('selected_months', list(range(1, 13)))
-        enable_outlier = data.get('enable_outlier', True)
-
-        # ========================================
-        # ✅ v4.3.4 新增：Z-scores（服務水準）
-        # ========================================
-        z_scores_raw = data.get('z_scores', None)
-        valid, error_msg, z_scores = validate_z_scores(z_scores_raw)
-        if not valid:
-            return jsonify({'success': False, 'error': error_msg}), 400
-
-        # ========================================
-        # ✅ v4.3.4 新增：ABC 分類門檻
-        # ========================================
-        abc_thresholds_raw = data.get('abc_thresholds', None)
-        valid, error_msg, abc_thresholds = validate_abc_thresholds(abc_thresholds_raw)
-        if not valid:
-            return jsonify({'success': False, 'error': error_msg}), 400
-
-        # ========================================
-        # 日誌輸出
-        # ========================================
-        logger.info(f"🧮 開始計算")
-        logger.info(f"   模式: {calc_mode}")
-        logger.info(f"   移動平均: {'啟用' if enable_ma else '停用'} (窗口: {ma_window})")
-        logger.info(f"   前置期: {lead_time} 天")
-        logger.info(f"   最少月數: {min_months}")
-        logger.info(f"   離群值檢測: {'啟用' if enable_outlier else '停用'}")
-        logger.info(f"   ✅ 服務水準: A={z_scores['A']:.2f}, B={z_scores['B']:.2f}, C={z_scores['C']:.2f}")
-        logger.info(f"   ✅ ABC門檻: A={abc_thresholds['A']:.0%}, B={abc_thresholds['B']:.0%}")
-
-        # ========================================
-        # 載入資料
-        # ========================================
-        sales_filename = session.get('sales_filename')
-        if not sales_filename:
-            return jsonify({'success': False, 'error': '請先上傳銷貨資料'}), 400
-
-        sales_path = get_safe_filepath(sales_filename)
-        if not sales_path:
-            return jsonify({'success': False, 'error': '找不到銷貨資料檔案'}), 400
-
         sales_data = load_sales_data(sales_path)
-        logger.info(f"✅ 銷貨資料載入完成")
+    except DataLoadError as e:
+        return _jsonify_error(ErrorCode.PARSE_ERROR, str(e))
 
-        # 單價資料（選填）
-        price_data = None
-        price_filename = session.get('price_filename')
-        if price_filename:
-            price_path = get_safe_filepath(price_filename)
-            if price_path:
-                try:
-                    price_data_obj = load_price_data(price_path)
-                    price_data = price_data_obj.price_map
-                    logger.info(f"✅ 單價資料載入完成")
-                except Exception as e:
-                    logger.warning(f"⚠️  載入單價資料失敗：{e}")
-        else:
-            logger.info(f"ℹ️  未提供單價資料，將使用數量進行 ABC 分類")
+    price_data = None
+    if price_path:
+        try:
+            price_data = load_price_data(price_path).price_map
+        except DataLoadError as e:
+            logger.warning(f"Price load failed, continuing without: {e}")
 
-        # 庫存計劃（選填）
-        plan_data = None
-        plan_filename = session.get('plan_filename')
-        if plan_filename:
-            plan_path = get_safe_filepath(plan_filename)
-            if plan_path:
-                try:
-                    plan_data = load_plan_data(plan_path)
-                    logger.info(f"✅ 庫存計劃載入完成")
-                except Exception as e:
-                    logger.warning(f"⚠️  載入計劃資料失敗：{e}")
+    plan_data = None
+    if plan_path:
+        try:
+            plan_data = load_plan_data(plan_path)
+        except DataLoadError as e:
+            logger.warning(f"Plan load failed, continuing without: {e}")
 
-        # ========================================
-        # 執行計算
-        # ========================================
-        calculator = SafetyStockCalculator()
+    filenames = {
+        "sales": sales_path.name if sales_path else None,
+        "price": price_path.name if price_path else None,
+        "plan": plan_path.name if plan_path else None,
+    }
 
-        if calc_mode == 'compare':
-            logger.info(f"📊 執行對比模式計算")
+    # --- Run calculation ---------------------------------------------------
+    calculator = SafetyStockCalculator()
+    start_ts = time.perf_counter()
 
+    try:
+        if calc_mode == "compare":
             comparison_data = calculate_comparison_mode(
-                calculator, sales_data, price_data, plan_data,
-                selected_months, min_months, lead_time,
-                enable_outlier, enable_ma, ma_window,
-                z_scores, abc_thresholds,
+                calculator=calculator,
+                sales_data=sales_data,
+                price_data=price_data,
+                plan_data=plan_data,
+                selected_months=selected_months,
+                min_months=min_months,
+                lead_time=lead_time,
+                enable_outlier=enable_outlier,
+                enable_ma=enable_ma,
+                ma_window=ma_window,
+                z_scores=z_scores,
+                abc_thresholds=abc_thresholds,
                 max_date=sales_data.max_date,
             )
+            # For the parameter snapshot, derive options from the (all) summary
+            all_summary_obj = comparison_data["all"][2]
+            # Reconstruct a light "options" object for snapshot building
+            options_like = _OptionsSnapshot(
+                calc_mode=calc_mode,
+                selected_months=selected_months,
+                lead_time_days=lead_time,
+                min_months=min_months,
+                z_scores=z_scores,
+                abc_thresholds=abc_thresholds,
+                enable_outlier_detection=enable_outlier,
+                enable_moving_average=enable_ma,
+                ma_window=ma_window,
+            )
+            execution_ms = (time.perf_counter() - start_ts) * 1000
+            snapshot = _build_parameters_snapshot(
+                body, options_like, sales_data, filenames, execution_ms
+            )
 
-            session['calculation_results'] = pickle.dumps(comparison_data['all'][0])
-            session['calculation_summary'] = pickle.dumps(comparison_data['all'][2])
-            session['calculation_results_total'] = pickle.dumps(comparison_data['total'][0])
-            session['calculation_summary_total'] = pickle.dumps(comparison_data['total'][2])
-            session['comparison_data'] = comparison_data['comparison']
-            session['sales_data'] = pickle.dumps(sales_data)
-            session['calc_mode'] = calc_mode
-
-            logger.info(f"✅ 對比模式計算完成")
-            logger.info(f"   分倉數據: {len(comparison_data['all'][0])} 筆")
-            logger.info(f"   總倉數據: {len(comparison_data['total'][0])} 筆")
-
-            all_serialized = serialize_results_for_json(*comparison_data['all'])
-            total_serialized = serialize_results_for_json(*comparison_data['total'])
-
-            response_data = {
-                'success': True,
-                'mode': 'compare',
-                'comparison': comparison_data['comparison'],
-                'all_data': all_serialized,
-                'total_data': total_serialized,
-                'all_summary': all_serialized,
-                'total_summary': total_serialized
+            response = {
+                "mode": "compare",
+                "version": API_VERSION,
+                "parameters": snapshot,
+                "comparison": comparison_data["comparison"],
+                "all_summary": serialize_results_for_json(*comparison_data["all"]),
+                "total_summary": serialize_results_for_json(*comparison_data["total"]),
             }
-
-            logger.info(f"📤 返回對比模式數據")
-            return jsonify(response_data)
-
         else:
-            logger.info(f"📦 執行單一模式計算：{calc_mode}")
-
+            target_site = params.get("target_site") or params.get("targetSite")
             results, excluded, summary = calculator.calculate(
                 sales_data=sales_data,
                 price_data=price_data,
                 plan_data=plan_data,
                 calc_mode=calc_mode,
+                target_site=target_site,
                 selected_months=selected_months,
                 min_months=min_months,
                 lead_time_days=lead_time,
@@ -649,383 +626,400 @@ def calculate():
                 max_date=sales_data.max_date,
             )
 
-            session['calculation_results'] = pickle.dumps(results)
-            session['calculation_summary'] = pickle.dumps(summary)
-            session['sales_data'] = pickle.dumps(sales_data)
-            session['calc_mode'] = calc_mode
+            options_like = _OptionsSnapshot(
+                calc_mode=calc_mode,
+                selected_months=selected_months,
+                lead_time_days=lead_time,
+                min_months=min_months,
+                z_scores=z_scores,
+                abc_thresholds=abc_thresholds,
+                enable_outlier_detection=enable_outlier,
+                enable_moving_average=enable_ma,
+                ma_window=ma_window,
+            )
+            execution_ms = (time.perf_counter() - start_ts) * 1000
+            snapshot = _build_parameters_snapshot(
+                body, options_like, sales_data, filenames, execution_ms
+            )
 
-            logger.info(f"✅ 單一模式計算完成")
-            logger.info(f"   有效 SKU: {len(results)} 筆")
-            logger.info(f"   排除 SKU: {len(excluded)} 筆")
-
-            response_data = {
-                'success': True,
-                'mode': calc_mode,
-                **serialize_results_for_json(results, excluded, summary)
+            serialized = serialize_results_for_json(results, excluded, summary)
+            response = {
+                "mode": calc_mode,
+                "version": API_VERSION,
+                "parameters": snapshot,
+                **serialized,
             }
 
-            logger.info(f"📤 返回單一模式數據")
-            return jsonify(response_data)
+        logger.info(f"Calculate OK ({calc_mode}) in {execution_ms:.0f}ms")
+        return _jsonify_success(response)
 
-    except Exception as e:
-        logger.error(f"❌ 計算失敗：{e}", exc_info=True)
-
-        response = {'success': False, 'error': '計算失敗'}
-        if DEBUG_MODE:
-            response['detail'] = str(e)
-            response['traceback'] = traceback.format_exc()
-
-        return jsonify(response), 500
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Calculation failed")
+        extra = {"detail": str(e), "traceback": traceback.format_exc()} if DEBUG_MODE else {}
+        return _jsonify_error(ErrorCode.CALC_FAILED, **extra)
 
 
-# ============================================================================
-# 路由：API - 移動平均詳情
-# ============================================================================
+class _OptionsSnapshot:
+    """Lightweight carrier mirroring CalculationOptions for snapshot building."""
 
-@app.route('/api/ma-detail/<site>/<sku>', methods=['GET'])
-def get_ma_detail(site, sku):
-    """取得移動平均詳情"""
-    try:
-        if not MODULES_AVAILABLE:
-            return jsonify({'success': False, 'error': '核心模組未載入'}), 500
-
-        if 'calculation_results' not in session or session['calculation_results'] is None:
-            return jsonify({'success': False, 'error': '請先執行計算'}), 400
-
-        logger.info(f"📊 取得 MA 詳情：{site} / {sku}")
-
-        results = pickle.loads(session['calculation_results'])
-        sales_data = pickle.loads(session['sales_data'])
-        summary = pickle.loads(session['calculation_summary'])
-
-        detail = get_ma_detail_for_sku(
-            results, site, sku, sales_data,
-            ma_window=summary.ma_window if hasattr(summary, 'ma_window') else 3
-        )
-
-        if detail is None:
-            logger.warning(f"⚠️  找不到 SKU：{site} / {sku}")
-            return jsonify({'success': False, 'error': 'SKU 不存在'}), 404
-
-        logger.info(f"✅ MA 詳情取得成功")
-        return jsonify({
-            'success': True,
-            **detail
-        })
-
-    except Exception as e:
-        logger.error(f"❌ 取得 MA 詳情失敗：{e}", exc_info=True)
-
-        response = {'success': False, 'error': '取得詳情失敗'}
-        if DEBUG_MODE:
-            response['detail'] = str(e)
-            response['traceback'] = traceback.format_exc()
-
-        return jsonify(response), 500
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 
-# ============================================================================
-# 路由：API - 匯出（v4.3.3 修復版）
-# ============================================================================
+# ===========================================================================
+# Export (Excel / SAP MM17) — stateless
+# ===========================================================================
 
-@app.route('/api/export/excel', methods=['POST'])
-def export_excel_api():
+def _deserialize_results(payload: List[Dict[str, Any]]) -> List[Any]:
     """
-    匯出 Excel（v4.3.3 - 支援出貨點篩選）
+    Convert the JSON result list back into lightweight objects that the
+    export functions can treat as CalculationResult-like via getattr.
 
-    請求參數（JSON）：
-    {
-        "site_filter": "SITE01" | null  # 出貨點篩選（可選）
-    }
+    We use a SimpleNamespace-style shim rather than re-importing enums, because
+    the exporter code already uses getattr with string fallbacks.
     """
-    try:
-        if not MODULES_AVAILABLE:
-            return jsonify({'success': False, 'error': '核心模組未載入'}), 500
+    from types import SimpleNamespace
 
-        if 'calculation_results' not in session or session['calculation_results'] is None:
-            return jsonify({'success': False, 'error': '請先執行計算'}), 400
+    out: List[Any] = []
+    for r in payload or []:
+        # Convert nested structures if any (status/abcClass are primitives here)
+        obj = SimpleNamespace(**{_snake(k): v for k, v in r.items()})
+        out.append(obj)
+    return out
 
-        # ✅ 取得參數
-        data = request.get_json() or {}
-        site_filter = data.get('site_filter', None)
 
-        logger.info(f"📥 開始匯出 Excel")
-        logger.info(f"   出貨點篩選: {site_filter or '無（全部）'}")
-
-        calc_mode = session.get('calc_mode', 'all')
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-        # ========================================
-        # 對比模式匯出
-        # ========================================
-        if calc_mode == 'compare':
-            try:
-                results_all = pickle.loads(session.get('calculation_results'))
-                summary_all = pickle.loads(session.get('calculation_summary'))
-                results_total = pickle.loads(session.get('calculation_results_total'))
-                summary_total = pickle.loads(session.get('calculation_summary_total'))
-                comparison = session.get('comparison_data', {})
-
-                # ✅ 出貨點篩選（僅對分倉數據）
-                if site_filter:
-                    results_all = filter_results_by_site(results_all, site_filter)
-
-                    if len(results_all) == 0:
-                        return jsonify({
-                            'success': False,
-                            'error': f'出貨點 {site_filter} 沒有資料'
-                        }), 400
-
-                logger.info(f"📊 對比模式匯出")
-                logger.info(f"   分倉數據: {len(results_all)} 筆")
-                logger.info(f"   總倉數據: {len(results_total)} 筆")
-
-                excel_bytes = export_comparison_to_excel(
-                    all_data=(results_all, [], summary_all),
-                    total_data=(results_total, [], summary_total),
-                    comparison=comparison
-                )
-
-                # ✅ 檔名包含出貨點資訊
-                site_suffix = f"_{site_filter}" if site_filter else ""
-                filename = f"safety_stock_compare{site_suffix}_{timestamp}.xlsx"
-
-                logger.info(f"✅ 對比模式 Excel 匯出成功：{filename}")
-
-            except Exception as e:
-                logger.error(f"❌ 對比模式匯出失敗：{e}", exc_info=True)
-                results = pickle.loads(session['calculation_results'])
-                summary = pickle.loads(session['calculation_summary'])
-
-                # 降級也要篩選
-                if site_filter:
-                    results = filter_results_by_site(results, site_filter)
-
-                excel_bytes = export_to_excel(results, [], summary)
-                site_suffix = f"_{site_filter}" if site_filter else ""
-                filename = f"safety_stock_all{site_suffix}_{timestamp}.xlsx"
-                logger.warning(f"⚠️  降級到普通匯出：{filename}")
-
-        # ========================================
-        # 非對比模式匯出
-        # ========================================
+def _snake(s: str) -> str:
+    """camelCase -> snake_case (for reverse conversion at export boundary)."""
+    if not isinstance(s, str) or not s:
+        return s
+    out = []
+    for i, ch in enumerate(s):
+        if ch.isupper() and i > 0:
+            out.append("_")
+            out.append(ch.lower())
         else:
-            results = pickle.loads(session['calculation_results'])
-            summary = pickle.loads(session['calculation_summary'])
+            out.append(ch.lower() if ch.isupper() else ch)
+    return "".join(out)
 
-            # ✅ 出貨點篩選
+
+def _deserialize_summary(payload: Dict[str, Any]) -> Any:
+    """Convert summary JSON dict into a SimpleNamespace for export functions."""
+    from types import SimpleNamespace
+
+    if not payload:
+        return SimpleNamespace()
+    return SimpleNamespace(**{_snake(k): v for k, v in payload.items()})
+
+
+@app.route("/api/export/excel", methods=["POST"])
+def export_excel():
+    """Stateless Excel export. Client sends the results payload."""
+    if not MODULES_AVAILABLE:
+        return _jsonify_error(ErrorCode.INTERNAL_ERROR, "核心模組未載入")
+
+    body = request.get_json(silent=True) or {}
+    mode = body.get("mode", "all")
+    site_filter = body.get("siteFilter") or body.get("site_filter")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    try:
+        if mode == "compare":
+            # Compare mode: need allSummary + totalSummary + comparison
+            all_summary = body.get("allSummary") or body.get("all_summary") or {}
+            total_summary = body.get("totalSummary") or body.get("total_summary") or {}
+            comparison = body.get("comparison") or {}
+
+            all_results = _deserialize_results(all_summary.get("results", []))
+            total_results = _deserialize_results(total_summary.get("results", []))
+            all_sum = _deserialize_summary(all_summary.get("summary", {}))
+            total_sum = _deserialize_summary(total_summary.get("summary", {}))
+
             if site_filter:
-                results = filter_results_by_site(results, site_filter)
+                # Filter both sides so comparison totals remain consistent
+                all_results = _filter_results_by_site(all_results, site_filter)
+                total_results = _filter_results_by_site(total_results, site_filter)
+                if not all_results and not total_results:
+                    return _jsonify_error(
+                        ErrorCode.NO_RESULTS, f"出貨點 {site_filter} 沒有資料"
+                    )
 
-                if len(results) == 0:
-                    return jsonify({
-                        'success': False,
-                        'error': f'出貨點 {site_filter} 沒有資料'
-                    }), 400
+            excel_bytes = export_comparison_to_excel(
+                all_data=(all_results, [], all_sum),
+                total_data=(total_results, [], total_sum),
+                comparison=comparison,
+            )
+            site_suffix = f"_{site_filter}" if site_filter else ""
+            filename = f"safety_stock_compare{site_suffix}_{timestamp}.xlsx"
+
+        else:
+            results_payload = body.get("results", [])
+            summary_payload = body.get("summary", {})
+            results = _deserialize_results(results_payload)
+            summary = _deserialize_summary(summary_payload)
+
+            if site_filter:
+                results = _filter_results_by_site(results, site_filter)
+                if not results:
+                    return _jsonify_error(
+                        ErrorCode.NO_RESULTS, f"出貨點 {site_filter} 沒有資料"
+                    )
 
             excel_bytes = export_to_excel(results, [], summary)
-
-            # ✅ 檔名包含出貨點資訊
             site_suffix = f"_{site_filter}" if site_filter else ""
-            filename = f"safety_stock_{calc_mode}{site_suffix}_{timestamp}.xlsx"
+            filename = f"safety_stock_{mode}{site_suffix}_{timestamp}.xlsx"
 
-            logger.info(f"✅ Excel 匯出成功：{filename} ({len(results)} 筆)")
-
-        # 使用 BytesIO
-        excel_io = io.BytesIO(excel_bytes)
-        excel_io.seek(0)
-
+        buf = io.BytesIO(excel_bytes)
+        buf.seek(0)
+        logger.info(f"Excel export OK: {filename}")
         return send_file(
-            excel_io,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             as_attachment=True,
-            download_name=filename
+            download_name=filename,
         )
 
-    except Exception as e:
-        logger.error(f"❌ 匯出 Excel 失敗：{e}", exc_info=True)
-        response = {'success': False, 'error': '匯出失敗'}
-        if DEBUG_MODE:
-            response['detail'] = str(e)
-            response['traceback'] = traceback.format_exc()
-        return jsonify(response), 500
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Excel export failed")
+        extra = {"detail": str(e)} if DEBUG_MODE else {}
+        return _jsonify_error(ErrorCode.EXPORT_FAILED, **extra)
 
 
-@app.route('/api/export/sap', methods=['POST'])
+@app.route("/api/export/sap", methods=["POST"])
 def export_sap():
-    """
-    匯出 SAP MM17 格式（v4.3.3 - 支援出貨點篩選）
+    """Stateless SAP MM17 export."""
+    if not MODULES_AVAILABLE:
+        return _jsonify_error(ErrorCode.INTERNAL_ERROR, "核心模組未載入")
 
-    請求參數（JSON）：
-    {
-        "format": "xlsx" | "csv",       # 檔案格式（必填）
-        "mode": "all" | "total",        # 對比模式時選擇（可選）
-        "site_filter": "SITE01" | null, # 出貨點篩選（可選）
-        "include_header": true          # 是否包含檔頭（可選，默認 true）
-    }
-    """
+    body = request.get_json(silent=True) or {}
+    export_format = body.get("format", "xlsx")
+    if export_format not in ("xlsx", "csv"):
+        return _jsonify_error(
+            ErrorCode.INVALID_EXPORT_FORMAT, "format 必須是 xlsx 或 csv"
+        )
+
+    site_filter = body.get("siteFilter") or body.get("site_filter")
+    mode = body.get("mode", "all")
+    include_header = bool(body.get("includeHeader", body.get("include_header", True)))
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     try:
-        if not MODULES_AVAILABLE:
-            return jsonify({'success': False, 'error': '核心模組未載入'}), 500
-
-        if 'calculation_results' not in session or session['calculation_results'] is None:
-            return jsonify({'success': False, 'error': '請先執行計算'}), 400
-
-        # ✅ 取得參數
-        data = request.get_json() or {}
-        export_format = data.get('format', 'xlsx')
-        sap_mode = data.get('mode', None)
-        site_filter = data.get('site_filter', None)
-        include_header = data.get('include_header', True)
-
-        # 驗證格式
-        if export_format not in ['xlsx', 'csv']:
-            return jsonify({'success': False, 'error': '格式必須是 xlsx 或 csv'}), 400
-
-        logger.info(f"📁 開始匯出 SAP MM17")
-        logger.info(f"   格式: {export_format}")
-        logger.info(f"   模式: {sap_mode or '自動'}")
-        logger.info(f"   出貨點篩選: {site_filter or '無（全部）'}")
-
-        calc_mode = session.get('calc_mode', 'all')
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-        # ========================================
-        # 決定匯出哪個結果
-        # ========================================
-        if calc_mode == 'compare':
-            if sap_mode == 'total':
-                results = pickle.loads(session.get('calculation_results_total'))
-                summary = pickle.loads(session.get('calculation_summary_total'))
-                mode_suffix = 'total'
-                logger.info(f"   對比模式：匯出總倉結果")
-            else:
-                results = pickle.loads(session.get('calculation_results'))
-                summary = pickle.loads(session.get('calculation_summary'))
-                mode_suffix = 'all'
-                logger.info(f"   對比模式：匯出分倉結果")
+        # Compare mode: client chooses which side (all/total) to export via `sapMode`
+        if mode == "compare":
+            sap_mode = body.get("sapMode") or body.get("sap_mode") or "all"
+            bucket_key = "totalSummary" if sap_mode == "total" else "allSummary"
+            bucket = body.get(bucket_key) or body.get(_snake(bucket_key)) or {}
+            results = _deserialize_results(bucket.get("results", []))
+            summary = _deserialize_summary(bucket.get("summary", {}))
+            mode_suffix = sap_mode
         else:
-            results = pickle.loads(session['calculation_results'])
-            summary = pickle.loads(session['calculation_summary'])
-            mode_suffix = calc_mode
+            results = _deserialize_results(body.get("results", []))
+            summary = _deserialize_summary(body.get("summary", {}))
+            mode_suffix = mode
 
-        # ========================================
-        # ✅ 出貨點篩選
-        # ========================================
         if site_filter:
-            results = filter_results_by_site(results, site_filter)
+            results = _filter_results_by_site(results, site_filter)
+            if not results:
+                return _jsonify_error(
+                    ErrorCode.NO_RESULTS, f"出貨點 {site_filter} 沒有資料"
+                )
 
-            if len(results) == 0:
-                return jsonify({
-                    'success': False,
-                    'error': f'出貨點 {site_filter} 沒有資料'
-                }), 400
-
-        # ========================================
-        # 生成 SAP MM17 文件
-        # ========================================
         sap_bytes = export_to_sap_mm17(
             results=results,
             summary=summary,
             format=export_format,
-            include_header=include_header
+            include_header=include_header,
         )
-
-        # ✅ 檔名包含出貨點資訊
         site_suffix = f"_{site_filter}" if site_filter else ""
         filename = f"sap_mm17_{mode_suffix}{site_suffix}_{timestamp}.{export_format}"
-
-        # MIME 類型
-        mime_types = {
-            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'csv': 'text/csv; charset=utf-8'
-        }
-
-        # 使用 BytesIO
-        sap_io = io.BytesIO(sap_bytes)
-        sap_io.seek(0)
-
-        logger.info(f"✅ SAP MM17 匯出成功：{filename}")
-        logger.info(f"   共 {len(results)} 筆數據")
-
-        return send_file(
-            sap_io,
-            mimetype=mime_types[export_format],
-            as_attachment=True,
-            download_name=filename
+        mime = (
+            "text/csv; charset=utf-8"
+            if export_format == "csv"
+            else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+        buf = io.BytesIO(sap_bytes)
+        buf.seek(0)
+        logger.info(f"SAP export OK: {filename} ({len(results)} rows)")
+        return send_file(buf, mimetype=mime, as_attachment=True, download_name=filename)
 
-    except Exception as e:
-        logger.error(f"❌ 匯出 SAP MM17 失敗：{e}", exc_info=True)
-        response = {'success': False, 'error': 'SAP MM17 匯出失敗'}
-        if DEBUG_MODE:
-            response['detail'] = str(e)
-            response['traceback'] = traceback.format_exc()
-        return jsonify(response), 500
+    except Exception as e:  # noqa: BLE001
+        logger.exception("SAP export failed")
+        extra = {"detail": str(e)} if DEBUG_MODE else {}
+        return _jsonify_error(ErrorCode.EXPORT_FAILED, **extra)
 
 
-# ============================================================================
-# 錯誤處理
-# ============================================================================
+# ===========================================================================
+# Moving Average detail — pure compute (stateless)
+# ===========================================================================
+
+def _group_by_quarter(monthly_data: Dict[str, float]) -> Dict[str, Dict[str, Any]]:
+    """Group monthly data into quarterly summary. Pure function, no deps."""
+    buckets: Dict[str, List[Tuple[str, float]]] = {}
+    for ym, value in sorted(monthly_data.items()):
+        year, month = _parse_year_month(ym)
+        if year == 0:
+            continue
+        if 1 <= month <= 3:
+            quarter = "Q1"
+        elif 4 <= month <= 6:
+            quarter = "Q2"
+        elif 7 <= month <= 9:
+            quarter = "Q3"
+        else:
+            quarter = "Q4"
+        key = f"{quarter} {year}"
+        buckets.setdefault(key, []).append((ym, float(value)))
+
+    summary: Dict[str, Dict[str, Any]] = {}
+    for key, pairs in sorted(buckets.items()):
+        values = [v for _, v in pairs]
+        summary[key] = {
+            "months": [ym for ym, _ in pairs],
+            "values": values,
+            "avg": round(sum(values) / len(values), 2) if values else 0,
+            "total": sum(values),
+            "count": len(values),
+        }
+    return summary
+
+
+def _find_filled_months(monthly_data: Dict[str, float]) -> List[str]:
+    """Return months between min and max that are missing from monthly_data."""
+    sorted_months = sorted(monthly_data.keys())
+    if not sorted_months:
+        return []
+
+    start_year, start_month = _parse_year_month(sorted_months[0])
+    end_year, end_month = _parse_year_month(sorted_months[-1])
+    if start_year == 0 or end_year == 0:
+        return []
+
+    expected: List[str] = []
+    y, m = start_year, start_month
+    guard = 0
+    while (y, m) <= (end_year, end_month) and guard < 400:
+        expected.append(f"{y}-{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+        guard += 1
+    return [ym for ym in expected if ym not in monthly_data]
+
+
+def _ma_recommendation(std_dev: float, mean_demand: float) -> Dict[str, str]:
+    """Small heuristic recommendation text."""
+    if std_dev <= 0:
+        return {"text": "標準差為 0，無需移動平均", "level": "info"}
+    cv = std_dev / mean_demand if mean_demand > 0 else 0
+    if cv > 0.5:
+        return {"text": f"需求波動較大 (CV={cv:.2f})，建議啟用移動平均平滑", "level": "warning"}
+    if cv > 0.3:
+        return {"text": f"需求波動中等 (CV={cv:.2f})，移動平均可能有幫助", "level": "info"}
+    return {"text": f"需求相對穩定 (CV={cv:.2f})，移動平均效果有限", "level": "success"}
+
+
+@app.route("/api/ma-detail", methods=["POST"])
+def ma_detail():
+    """
+    Compute moving-average detail for a single SKU (pure function).
+
+    Input: the monthly data the client already has from /api/calculate.
+    No file or session lookup needed.
+    """
+    if not MODULES_AVAILABLE:
+        return _jsonify_error(ErrorCode.INTERNAL_ERROR, "核心模組未載入")
+
+    body = request.get_json(silent=True) or {}
+
+    site = body.get("site", "")
+    sku = body.get("sku", "")
+    name = body.get("name", "")
+    abc_class = body.get("abcClass") or body.get("abc_class") or ""
+
+    monthly_data = body.get("monthlyData") or body.get("monthly_data")
+    if not isinstance(monthly_data, dict) or not monthly_data:
+        return _jsonify_error(ErrorCode.MISSING_MONTHLY_VALUES)
+
+    # Coerce to float values; drop bad entries
+    cleaned: Dict[str, float] = {}
+    for k, v in monthly_data.items():
+        try:
+            cleaned[str(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+
+    try:
+        mean_demand = float(body.get("meanDemand", body.get("mean_demand", 0)) or 0)
+        std_dev = float(body.get("stdDev", body.get("std_dev", 0)) or 0)
+        total_qty = float(body.get("totalQty", body.get("total_qty", 0)) or 0)
+        active_months = int(body.get("activeMonths", body.get("active_months", 0)) or 0)
+        outliers_removed = int(body.get("outliersRemoved", body.get("outliers_removed", 0)) or 0)
+        ma_window = int(body.get("maWindow", body.get("ma_window", 3)) or 3)
+    except (TypeError, ValueError):
+        return _jsonify_error(ErrorCode.INVALID_PARAMS, "統計欄位必須是數字")
+
+    try:
+        quarterly = _group_by_quarter(cleaned)
+        filled = _find_filled_months(cleaned)
+        recommendation = _ma_recommendation(std_dev, mean_demand)
+
+        payload = {
+            "site": site,
+            "sku": sku,
+            "name": name,
+            "abc_class": abc_class,
+            "monthly_data": cleaned,
+            "quarterly_summary": quarterly,
+            "filled_months": filled,
+            "statistics": {
+                "std_original": std_dev,
+                "mean": mean_demand,
+                "total_qty": total_qty,
+                "active_months": active_months,
+                "outliers_removed": outliers_removed,
+            },
+            "recommendation": recommendation,
+            "ma_window": ma_window,
+        }
+        return _jsonify_success(payload)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("MA detail failed")
+        extra = {"detail": str(e)} if DEBUG_MODE else {}
+        return _jsonify_error(ErrorCode.MA_COMPUTE_FAILED, **extra)
+
+
+# ===========================================================================
+# Error handlers (return JSON instead of HTML)
+# ===========================================================================
 
 @app.errorhandler(404)
-def not_found(error):
-    """404 錯誤"""
-    path = request.path
-
-    ignore_paths = [
-        "/favicon.ico",
-        "/.well-known/appspecific/com.chrome.devtools.json"
-    ]
-
-    if path in ignore_paths:
-        return "", 404
-
-    logger.warning(f"⚠️  404 錯誤：{request.url}")
-    return jsonify({'success': False, 'error': '找不到資源'}), 404
+def _handle_404(error):
+    return _jsonify_error(ErrorCode.NOT_FOUND, f"路由不存在: {request.path}")
 
 
-@app.errorhandler(500)
-def internal_error(error):
-    """500 錯誤"""
-    logger.error(f"❌ 500 內部錯誤：{error}", exc_info=True)
-
-    response = {'success': False, 'error': '伺服器內部錯誤'}
-    if DEBUG_MODE:
-        response['detail'] = str(error)
-
-    return jsonify(response), 500
+@app.errorhandler(405)
+def _handle_405(error):
+    return _jsonify_error(ErrorCode.METHOD_NOT_ALLOWED, f"{request.method} {request.path}")
 
 
 @app.errorhandler(413)
-def request_entity_too_large(error):
-    """檔案過大錯誤"""
-    max_mb = app.config['MAX_CONTENT_LENGTH'] // (1024 * 1024)
-    logger.warning(f"⚠️  413 檔案過大：超過 {max_mb} MB")
-    return jsonify({
-        'success': False,
-        'error': f'檔案過大，最大允許 {max_mb} MB'
-    }), 413
+@app.errorhandler(RequestEntityTooLarge)
+def _handle_413(error):
+    return _jsonify_error(ErrorCode.FILE_TOO_LARGE, f"檔案超過 {MAX_UPLOAD_MB}MB 限制")
 
 
-# ============================================================================
-# 啟動設定
-# ============================================================================
+@app.errorhandler(500)
+def _handle_500(error):
+    logger.exception("500 error")
+    extra = {"detail": str(error)} if DEBUG_MODE else {}
+    return _jsonify_error(ErrorCode.INTERNAL_ERROR, **extra)
 
-if __name__ == '__main__':
-    import os
 
-    port = int(os.environ.get('PORT', 5000))
+# ===========================================================================
+# Main
+# ===========================================================================
 
-    # 本地開發環境
-    if os.environ.get('FLASK_ENV') != 'production':
-        print("=" * 60)
-        print("🚀 開發模式 v4.3.4")
-        print("=" * 60)
-        app.run(debug=True, port=port, host='0.0.0.0')
-    else:
-        # 生產環境（Render）
-        print("=" * 60)
-        print("🚀 生產環境 v4.3.4")
-        print("=" * 60)
-        app.run(debug=False, port=port, host='0.0.0.0')
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=DEBUG_MODE)
