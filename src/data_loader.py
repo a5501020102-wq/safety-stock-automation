@@ -329,6 +329,15 @@ def _process_date_column_vectorized(df: pd.DataFrame) -> tuple[pd.DataFrame, int
         df = df.copy()
         df["year_month"] = parsed.dt.strftime("%Y-%m")
 
+        iso_cal = parsed.dt.isocalendar()
+        df["year_week"] = (
+            iso_cal["year"].astype(str)
+            + "-W"
+            + iso_cal["week"].astype(str).str.zfill(2)
+        )
+
+        df["date_str"] = parsed.dt.strftime("%Y-%m-%d")
+
         skipped_count = int(df["year_month"].isna().sum())
         df = df[df["year_month"].notna()].copy()
 
@@ -344,6 +353,8 @@ def _process_date_column_fallback(df: pd.DataFrame) -> tuple[pd.DataFrame, int, 
     """Fallback date processing (row by row)"""
     skipped_count = 0
     year_months: list[str | None] = []
+    year_weeks: list[str | None] = []
+    date_strs: list[str | None] = []
     max_date: datetime | None = None
 
     for idx, row in df.iterrows():
@@ -352,6 +363,8 @@ def _process_date_column_fallback(df: pd.DataFrame) -> tuple[pd.DataFrame, int, 
         try:
             if pd.isna(date_val):
                 year_months.append(None)
+                year_weeks.append(None)
+                date_strs.append(None)
                 skipped_count += 1
                 continue
 
@@ -363,20 +376,29 @@ def _process_date_column_fallback(df: pd.DataFrame) -> tuple[pd.DataFrame, int, 
                 dt = pd.to_datetime(date_val, origin="1899-12-30", unit="D")
             else:
                 year_months.append(None)
+                year_weeks.append(None)
+                date_strs.append(None)
                 skipped_count += 1
                 continue
 
             year_months.append(f"{dt.year}-{dt.month:02d}")
+            iso = dt.isocalendar()
+            year_weeks.append(f"{iso[0]}-W{iso[1]:02d}")
+            date_strs.append(dt.strftime("%Y-%m-%d"))
             if max_date is None or dt > max_date:
                 max_date = dt
 
         except Exception as e:
             logger.debug(f"第 {idx} 列日期格式無效: {date_val} ({e})")
             year_months.append(None)
+            year_weeks.append(None)
+            date_strs.append(None)
             skipped_count += 1
 
     df = df.copy()
     df["year_month"] = year_months
+    df["year_week"] = year_weeks
+    df["date_str"] = date_strs
     df = df[df["year_month"].notna()].copy()
     return df, skipped_count, max_date
 
@@ -394,9 +416,8 @@ def _clean_sales_data(df: pd.DataFrame) -> pd.DataFrame:
     if "site" in df.columns:
         df["site"] = df["site"].astype(str).str.strip()
 
-    # quantity numeric and non-negative
+    # quantity numeric — keep negatives (returns) for natural offset in aggregation
     df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(0)
-    df = df[df["quantity"] >= 0].copy()
 
     # optional string columns
     if "name" in df.columns:

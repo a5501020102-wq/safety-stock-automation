@@ -35,7 +35,7 @@ import sys
 import time
 import traceback
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -104,7 +104,7 @@ except ImportError as exc:
 # Flask app setup
 # ---------------------------------------------------------------------------
 
-API_VERSION = "5.0.0"
+API_VERSION = "5.1.0"
 MAX_UPLOAD_MB = 50
 
 app = Flask(__name__)
@@ -115,14 +115,11 @@ DEBUG_MODE = os.environ.get("FLASK_ENV") == "development"
 
 # CORS: allow local dev + Vercel preview URLs. Production domains should be
 # added via the ALLOWED_ORIGINS env var (comma-separated).
-_default_origins: List[Any] = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    re.compile(r"^https://.*\.vercel\.app$"),
-]
 _env_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
 if _env_origins:
-    _default_origins.extend(o.strip() for o in _env_origins.split(",") if o.strip())
+    _default_origins: List[str] = [o.strip() for o in _env_origins.split(",") if o.strip()]
+else:
+    _default_origins: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 CORS(
     app,
@@ -135,6 +132,27 @@ CORS(
 # Initialize temp dir on startup
 if MODULES_AVAILABLE:
     init_temp_dir("temp_uploads")
+
+# ---------------------------------------------------------------------------
+# Material Master (loaded once at startup from data/material_master.json)
+# ---------------------------------------------------------------------------
+
+_MATERIAL_MASTER: Dict[str, Any] = {}
+
+_master_path = Path(__file__).parent / "data" / "material_master.json"
+if _master_path.exists():
+    try:
+        import json as _json
+        with open(_master_path, encoding="utf-8") as _f:
+            _MATERIAL_MASTER = _json.load(_f)
+        logger.info(
+            f"Material master loaded: {_MATERIAL_MASTER.get('totalSkus', 0)} SKUs, "
+            f"{_MATERIAL_MASTER.get('totalCategories', 0)} categories"
+        )
+    except Exception as _e:
+        logger.warning(f"Failed to load material master: {_e}")
+else:
+    logger.info("No material_master.json found, category features disabled")
 
 logger.info(f"Flask API initialized (v{API_VERSION}, debug={DEBUG_MODE})")
 
@@ -247,6 +265,37 @@ def health():
     return jsonify({"status": "ok", "version": API_VERSION})
 
 
+@app.route("/api/material-groups", methods=["GET"])
+def material_groups():
+    """Return material master categories for the frontend category-LT panel."""
+    if not _MATERIAL_MASTER:
+        return _jsonify_success({
+            "available": False,
+            "categories": {},
+            "version": None,
+        })
+
+    cats = _MATERIAL_MASTER.get("categories", {})
+    slim_cats: Dict[str, Any] = {}
+    for prefix, cat in cats.items():
+        slim_cats[prefix] = {
+            "name": cat["name"],
+            "totalCount": cat["totalCount"],
+            "groups": {
+                gid: {"name": g["name"], "count": g["count"]}
+                for gid, g in cat["groups"].items()
+            },
+        }
+
+    return _jsonify_success({
+        "available": True,
+        "version": _MATERIAL_MASTER.get("version"),
+        "totalSkus": _MATERIAL_MASTER.get("totalSkus", 0),
+        "totalCategories": _MATERIAL_MASTER.get("totalCategories", 0),
+        "categories": slim_cats,
+    })
+
+
 @app.route("/legacy", methods=["GET"])
 def legacy_ui():
     """Legacy Jinja UI (preserved during migration to Next.js)."""
@@ -290,7 +339,7 @@ def _build_upload_metadata(
         "file_id": file_id,
         "filename": original_name,
         "file_size_bytes": size_bytes,
-        "uploaded_at": datetime.utcnow().isoformat() + "Z",
+        "uploaded_at": datetime.now(tz=timezone.utc).isoformat(),
     }
 
     if file_type == "sales":
@@ -421,10 +470,12 @@ def _build_parameters_snapshot(
         "enable_outlier": options.enable_outlier_detection,
         "enable_ma": options.enable_moving_average,
         "ma_window": options.ma_window if options.enable_moving_average else None,
+        "granularity": getattr(options, "granularity", "monthly"),
+        "engine_version": API_VERSION,
         "sales_filename": filenames.get("sales"),
         "price_filename": filenames.get("price"),
         "plan_filename": filenames.get("plan"),
-        "executed_at": datetime.utcnow().isoformat() + "Z",
+        "executed_at": datetime.now(tz=timezone.utc).isoformat(),
         "execution_time_ms": round(execution_time_ms, 1),
     }
 
@@ -533,6 +584,17 @@ def calculate():
         params.get("enable_ma", params.get("enableMa", False))
     )
 
+    granularity_str = params.get("granularity", "monthly")
+    valid_granularities = ("daily", "weekly", "monthly")
+    if granularity_str not in valid_granularities:
+        return _jsonify_error(
+            ErrorCode.INVALID_PARAMS,
+            f"granularity 必須是 {valid_granularities} 之一，收到: {granularity_str}"
+        )
+
+    category_lead_times = params.get("category_lead_times") or params.get("categoryLeadTimes") or {}
+    group_lead_times = params.get("group_lead_times") or params.get("groupLeadTimes") or {}
+
     # --- Load data ----------------------------------------------------------
     try:
         sales_data = load_sales_data(sales_path)
@@ -579,6 +641,10 @@ def calculate():
                 z_scores=z_scores,
                 abc_thresholds=abc_thresholds,
                 max_date=sales_data.max_date,
+                granularity=granularity_str,
+                category_lead_times=category_lead_times,
+                group_lead_times=group_lead_times,
+                material_master=_MATERIAL_MASTER or None,
             )
             # For the parameter snapshot, derive options from the (all) summary
             all_summary_obj = comparison_data["all"][2]
@@ -593,6 +659,7 @@ def calculate():
                 enable_outlier_detection=enable_outlier,
                 enable_moving_average=enable_ma,
                 ma_window=ma_window,
+                granularity=granularity_str,
             )
             execution_ms = (time.perf_counter() - start_ts) * 1000
             snapshot = _build_parameters_snapshot(
@@ -624,6 +691,10 @@ def calculate():
                 z_scores=z_scores,
                 abc_thresholds=abc_thresholds,
                 max_date=sales_data.max_date,
+                granularity=granularity_str,
+                category_lead_times=category_lead_times,
+                group_lead_times=group_lead_times,
+                material_master=_MATERIAL_MASTER or None,
             )
 
             options_like = _OptionsSnapshot(
@@ -636,6 +707,7 @@ def calculate():
                 enable_outlier_detection=enable_outlier,
                 enable_moving_average=enable_ma,
                 ma_window=ma_window,
+                granularity=granularity_str,
             )
             execution_ms = (time.perf_counter() - start_ts) * 1000
             snapshot = _build_parameters_snapshot(
@@ -749,7 +821,7 @@ def export_excel():
                 total_data=(total_results, [], total_sum),
                 comparison=comparison,
             )
-            site_suffix = f"_{site_filter}" if site_filter else ""
+            site_suffix = f"_{re.sub(r'[^a-zA-Z0-9_-]', '_', site_filter)}" if site_filter else ""
             filename = f"safety_stock_compare{site_suffix}_{timestamp}.xlsx"
 
         else:
@@ -766,7 +838,7 @@ def export_excel():
                     )
 
             excel_bytes = export_to_excel(results, [], summary)
-            site_suffix = f"_{site_filter}" if site_filter else ""
+            site_suffix = f"_{re.sub(r'[^a-zA-Z0-9_-]', '_', site_filter)}" if site_filter else ""
             filename = f"safety_stock_{mode}{site_suffix}_{timestamp}.xlsx"
 
         buf = io.BytesIO(excel_bytes)
@@ -830,7 +902,7 @@ def export_sap():
             format=export_format,
             include_header=include_header,
         )
-        site_suffix = f"_{site_filter}" if site_filter else ""
+        site_suffix = f"_{re.sub(r'[^a-zA-Z0-9_-]', '_', site_filter)}" if site_filter else ""
         filename = f"sap_mm17_{mode_suffix}{site_suffix}_{timestamp}.{export_format}"
         mime = (
             "text/csv; charset=utf-8"

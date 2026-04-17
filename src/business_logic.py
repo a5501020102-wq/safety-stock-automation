@@ -143,6 +143,10 @@ def calculate_comparison_mode(
         z_scores: Optional[Dict[str, float]] = None,
         abc_thresholds: Optional[Dict[str, float]] = None,
         max_date: Any = None,
+        granularity: str = "monthly",
+        category_lead_times: Optional[Dict[str, int]] = None,
+        group_lead_times: Optional[Dict[str, int]] = None,
+        material_master: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     對比模式：同時計算分倉(all)與總倉(total)
@@ -221,6 +225,10 @@ def calculate_comparison_mode(
             z_scores=z_scores,
             abc_thresholds=abc_thresholds,
             max_date=max_date,
+            granularity=granularity,
+            category_lead_times=category_lead_times,
+            group_lead_times=group_lead_times,
+            material_master=material_master,
         )
         logger.info(f"   ✅ 分倉計算完成: {len(results_all)} 筆")
 
@@ -242,6 +250,10 @@ def calculate_comparison_mode(
             z_scores=z_scores,
             abc_thresholds=abc_thresholds,
             max_date=max_date,
+            granularity=granularity,
+            category_lead_times=category_lead_times,
+            group_lead_times=group_lead_times,
+            material_master=material_master,
         )
         logger.info(f"   ✅ 總倉計算完成: {len(results_total)} 筆")
 
@@ -1071,7 +1083,10 @@ def _serialize_results(results: List[Any]) -> List[Dict[str, Any]]:
             # --- MA 相關 ---
             "enable_ma": bool(getattr(r, "enable_ma", False)),
 
-            # --- 月度明細（供前端展示） ---
+            # --- ABC 元數據 ---
+            "is_price_missing": bool(getattr(r, "is_price_missing", False)),
+
+            # --- 期間明細（供前端展示） ---
             "monthly_values": [round(v, 2) for v in (getattr(r, "monthly_values", []) or [])],
         })
 

@@ -11,7 +11,8 @@ instance/
 # 上傳和輸出檔案
 uploads/
 cache/
-data/
+data/*
+!data/material_master.json
 
 # v5.0.0 stateless API temp storage
 temp_uploads/
