@@ -255,6 +255,10 @@ class CalculationOptions:
     category_lead_times: dict[str, int] = field(default_factory=dict)
     group_lead_times: dict[str, int] = field(default_factory=dict)
 
+    # v5.1.0: Date range filter
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+
 
 @dataclass
 class CalculationRequest:
@@ -327,6 +331,8 @@ class SafetyStockCalculator:
             category_lead_times: dict[str, int] | None = None,
             group_lead_times: dict[str, int] | None = None,
             material_master: dict[str, Any] | None = None,
+            date_from: datetime | None = None,
+            date_to: datetime | None = None,
     ) -> tuple[list[CalculationResult], list[ExcludedItem], CalculationSummary]:
         """
         Execute the complete safety stock calculation.
@@ -372,6 +378,8 @@ class SafetyStockCalculator:
             granularity=granularity,
             category_lead_times=category_lead_times,
             group_lead_times=group_lead_times,
+            date_from=date_from,
+            date_to=date_to,
         )
 
         # ✅ v4.3.4: 日誌輸出參數資訊
@@ -418,6 +426,8 @@ class SafetyStockCalculator:
             granularity: str | Granularity | None = None,
             category_lead_times: dict[str, int] | None = None,
             group_lead_times: dict[str, int] | None = None,
+            date_from: datetime | None = None,
+            date_to: datetime | None = None,
     ) -> CalculationOptions:
         """Create calculation options with overrides applied to defaults."""
         # Resolve granularity
@@ -493,6 +503,11 @@ class SafetyStockCalculator:
             options.category_lead_times = {str(k): int(v) for k, v in category_lead_times.items()}
         if group_lead_times:
             options.group_lead_times = {str(k): int(v) for k, v in group_lead_times.items()}
+
+        if date_from is not None:
+            options.date_from = date_from
+        if date_to is not None:
+            options.date_to = date_to
 
         return options
 
@@ -785,6 +800,8 @@ class SafetyStockCalculator:
             selected_months: list[int],
             fill_value: float = 0.0,
             max_date: datetime | None = None,
+            date_from: datetime | None = None,
+            date_to: datetime | None = None,
     ) -> tuple[list[float], int, int, list[str]]:
         """
         Fill missing periods and return a complete time series.
@@ -806,6 +823,12 @@ class SafetyStockCalculator:
             logger.error(f"Period key parse failed: {sorted_keys[0]} / {sorted_keys[-1]}")
             vals = [timeline[k] for k in sorted_keys]
             return vals, 0, len(vals), sorted_keys
+
+        # Apply user-specified date range override
+        if date_from is not None and date_from > start_dt:
+            start_dt = date_from
+        if date_to is not None and date_to < end_dt:
+            end_dt = date_to
 
         # Exclude incomplete trailing period
         if max_date is not None:
@@ -945,6 +968,8 @@ class SafetyStockCalculator:
                 options.selected_months,
                 fill_value=0.0,
                 max_date=options.max_date,
+                date_from=options.date_from,
+                date_to=options.date_to,
             )
 
             if missing_count > 0:
@@ -1159,24 +1184,23 @@ class SafetyStockCalculator:
         priced = [i for i in items if i["price"] > 0]
         unpriced = [i for i in items if i["price"] <= 0]
 
-        # Unpriced items → always C with flag
+        # Mark unpriced items
         for item in unpriced:
-            item["abc_class"] = ABCClass.C
             item["is_price_missing"] = True
 
         if not priced:
-            # All items lack price → classify by quantity
+            # All items lack price → classify entirely by quantity
             self._abc_classify_list(items, "total_qty", options)
-            for item in items:
-                item["is_price_missing"] = True
             return
 
         # Priced items → classify by value
         self._abc_classify_list(priced, "total_value", options)
 
+        # Unpriced items → classify independently by quantity (not stuck at C)
         if unpriced:
+            self._abc_classify_list(unpriced, "total_qty", options)
             logger.info(
-                f"ABC: {len(unpriced)} 品項無價格資料，標記為 C 類 (is_price_missing)"
+                f"ABC: {len(unpriced)} 品項無價格資料，按數量獨立分類 (is_price_missing)"
             )
 
         class_counts = {

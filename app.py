@@ -595,6 +595,22 @@ def calculate():
     category_lead_times = params.get("category_lead_times") or params.get("categoryLeadTimes") or {}
     group_lead_times = params.get("group_lead_times") or params.get("groupLeadTimes") or {}
 
+    date_from_str = params.get("date_from") or params.get("dateFrom") or None
+    date_to_str = params.get("date_to") or params.get("dateTo") or None
+
+    date_from = None
+    date_to = None
+    if date_from_str:
+        try:
+            date_from = datetime.strptime(date_from_str.replace("/", "-"), "%Y-%m-%d")
+        except (ValueError, AttributeError):
+            pass
+    if date_to_str:
+        try:
+            date_to = datetime.strptime(date_to_str.replace("/", "-"), "%Y-%m-%d")
+        except (ValueError, AttributeError):
+            pass
+
     # --- Load data ----------------------------------------------------------
     try:
         sales_data = load_sales_data(sales_path)
@@ -645,6 +661,8 @@ def calculate():
                 category_lead_times=category_lead_times,
                 group_lead_times=group_lead_times,
                 material_master=_MATERIAL_MASTER or None,
+                date_from=date_from,
+                date_to=date_to,
             )
             # For the parameter snapshot, derive options from the (all) summary
             all_summary_obj = comparison_data["all"][2]
@@ -695,6 +713,8 @@ def calculate():
                 category_lead_times=category_lead_times,
                 group_lead_times=group_lead_times,
                 material_master=_MATERIAL_MASTER or None,
+                date_from=date_from,
+                date_to=date_to,
             )
 
             options_like = _OptionsSnapshot(
@@ -800,7 +820,8 @@ def export_excel():
             # Compare mode: need allSummary + totalSummary + comparison
             all_summary = body.get("allSummary") or body.get("all_summary") or {}
             total_summary = body.get("totalSummary") or body.get("total_summary") or {}
-            comparison = body.get("comparison") or {}
+            comparison_raw = body.get("comparison") or {}
+            comparison = {_snake(k): v for k, v in comparison_raw.items()}
 
             all_results = _deserialize_results(all_summary.get("results", []))
             total_results = _deserialize_results(total_summary.get("results", []))

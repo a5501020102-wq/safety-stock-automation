@@ -147,6 +147,8 @@ def calculate_comparison_mode(
         category_lead_times: Optional[Dict[str, int]] = None,
         group_lead_times: Optional[Dict[str, int]] = None,
         material_master: Optional[Dict[str, Any]] = None,
+        date_from: Any = None,
+        date_to: Any = None,
 ) -> Dict[str, Any]:
     """
     對比模式：同時計算分倉(all)與總倉(total)
@@ -229,6 +231,8 @@ def calculate_comparison_mode(
             category_lead_times=category_lead_times,
             group_lead_times=group_lead_times,
             material_master=material_master,
+            date_from=date_from,
+            date_to=date_to,
         )
         logger.info(f"   ✅ 分倉計算完成: {len(results_all)} 筆")
 
