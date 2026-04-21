@@ -816,6 +816,7 @@ def export_excel():
     body = request.get_json(silent=True) or {}
     mode = body.get("mode", "all")
     site_filter = body.get("siteFilter") or body.get("site_filter")
+    granularity = body.get("granularity", "monthly")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     try:
@@ -844,6 +845,7 @@ def export_excel():
                 all_data=(all_results, [], all_sum),
                 total_data=(total_results, [], total_sum),
                 comparison=comparison,
+                granularity=granularity,
             )
             site_suffix = f"_{re.sub(r'[^a-zA-Z0-9_-]', '_', site_filter)}" if site_filter else ""
             filename = f"safety_stock_compare{site_suffix}_{timestamp}.xlsx"
@@ -861,7 +863,7 @@ def export_excel():
                         ErrorCode.NO_RESULTS, f"出貨點 {site_filter} 沒有資料"
                     )
 
-            excel_bytes = export_to_excel(results, [], summary)
+            excel_bytes = export_to_excel(results, [], summary, granularity=granularity)
             site_suffix = f"_{re.sub(r'[^a-zA-Z0-9_-]', '_', site_filter)}" if site_filter else ""
             filename = f"safety_stock_{mode}{site_suffix}_{timestamp}.xlsx"
 

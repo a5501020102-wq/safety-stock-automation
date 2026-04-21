@@ -520,7 +520,8 @@ def _generate_recommendation(result: Any) -> Dict[str, str]:
 # Excel 匯出功能
 # ============================================================================
 
-def export_to_excel(results: List[Any], excluded: List[Any], summary: Any) -> bytes:
+def export_to_excel(results: List[Any], excluded: List[Any], summary: Any,
+                    granularity: str = "monthly") -> bytes:
     """
     匯出計算結果為 Excel 檔案
 
@@ -537,9 +538,9 @@ def export_to_excel(results: List[Any], excluded: List[Any], summary: Any) -> by
     try:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             if results:
-                _write_results_sheet(writer, results)
+                _write_results_sheet(writer, results, granularity=granularity)
             if excluded:
-                _write_excluded_sheet(writer, excluded)
+                _write_excluded_sheet(writer, excluded, granularity=granularity)
             if summary:
                 _write_summary_sheet(writer, summary)
 
@@ -553,11 +554,21 @@ def export_to_excel(results: List[Any], excluded: List[Any], summary: Any) -> by
         raise ValueError(f"無法匯出 Excel：{str(e)}") from e
 
 
-def _result_to_row(r: Any) -> Dict[str, Any]:
+def _period_labels(granularity: str = "monthly") -> tuple:
+    """Return (active_label, mean_label) based on granularity."""
+    if granularity == "daily":
+        return "活躍天數", "日平均需求"
+    elif granularity == "weekly":
+        return "活躍周數", "周平均需求"
+    return "活躍月數", "月平均需求"
+
+
+def _result_to_row(r: Any, granularity: str = "monthly") -> Dict[str, Any]:
     """將單一 CalculationResult 轉為 Excel / 匯出用的 dict（共用邏輯）"""
     mean_demand = _safe_float(getattr(r, "mean_demand", 0), 0)
     std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
     cv = _resolve_cv(r)
+    active_label, mean_label = _period_labels(granularity)
 
     return {
         "出貨點": getattr(r, "site", ""),
@@ -566,8 +577,8 @@ def _result_to_row(r: Any) -> Dict[str, Any]:
         "ABC分類": _get_enum_value(getattr(r, "abc_class", "")),
         "總需求量": _safe_float(getattr(r, "total_qty", 0), 0),
         "總需求金額": _round(getattr(r, "total_value", 0), 2, 0.0),
-        "活躍月數": _safe_int(getattr(r, "active_months", 0), 0),
-        "月平均需求": _round(mean_demand, 2, 0.0),
+        active_label: _safe_int(getattr(r, "active_months", 0), 0),
+        mean_label: _round(mean_demand, 2, 0.0),
         "標準差": _round(std_dev, 2, 0.0),
         "CV": _round(cv, 3, 0.0),
         "安全庫存": _safe_float(getattr(r, "safety_stock", 0), 0),
@@ -582,21 +593,23 @@ def _result_to_row(r: Any) -> Dict[str, Any]:
     }
 
 
-def _write_results_sheet(writer, results: List[Any], sheet_name: str = "計算結果") -> None:
+def _write_results_sheet(writer, results: List[Any], sheet_name: str = "計算結果",
+                         granularity: str = "monthly") -> None:
     """寫入計算結果工作表（支援自訂工作表名稱）"""
-    rows = [_result_to_row(r) for r in results]
+    rows = [_result_to_row(r, granularity) for r in results]
     pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
 
 
-def _write_excluded_sheet(writer, excluded: List[Any]) -> None:
+def _write_excluded_sheet(writer, excluded: List[Any], granularity: str = "monthly") -> None:
     """寫入排除項目工作表"""
+    active_label = _period_labels(granularity)[0]
     rows = []
     for e in excluded:
         rows.append({
             "出貨點": getattr(e, "site", ""),
             "料號": getattr(e, "sku", ""),
             "品名": getattr(e, "name", ""),
-            "活躍月數": _safe_int(getattr(e, "active_months", 0), 0),
+            active_label: _safe_int(getattr(e, "active_months", 0), 0),
             "總需求量": _safe_float(getattr(e, "total_qty", 0), 0),
             "排除原因": getattr(e, "reason", ""),
         })
@@ -775,7 +788,8 @@ def export_to_sap_mm17(
 def export_comparison_to_excel(
         all_data: tuple,
         total_data: tuple,
-        comparison: dict
+        comparison: dict,
+        granularity: str = "monthly",
 ) -> bytes:
     """
     匯出對比模式的完整 Excel 分析
@@ -843,14 +857,14 @@ def export_comparison_to_excel(
             # Sheet 2: 分倉計算
             # ========================================
             if results_all:
-                _write_results_sheet(writer, results_all, "分倉計算")
+                _write_results_sheet(writer, results_all, "分倉計算", granularity=granularity)
                 logger.info(f"✅ Sheet 2: 分倉計算 - {len(results_all)} 筆")
 
             # ========================================
             # Sheet 3: 總倉計算
             # ========================================
             if results_total:
-                _write_results_sheet(writer, results_total, "總倉計算")
+                _write_results_sheet(writer, results_total, "總倉計算", granularity=granularity)
                 logger.info(f"✅ Sheet 3: 總倉計算 - {len(results_total)} 筆")
 
             # ========================================
