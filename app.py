@@ -113,17 +113,20 @@ app.config["JSON_AS_ASCII"] = False  # keep Chinese readable in JSON
 
 DEBUG_MODE = os.environ.get("FLASK_ENV") == "development"
 
-# CORS: allow local dev + Vercel preview URLs. Production domains should be
-# added via the ALLOWED_ORIGINS env var (comma-separated).
+# CORS: always allow localhost + any origins from ALLOWED_ORIGINS env var.
+_allowed_origins: List[str] = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 _env_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
 if _env_origins:
-    _default_origins: List[str] = [o.strip() for o in _env_origins.split(",") if o.strip()]
-else:
-    _default_origins: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    _allowed_origins.extend(o.strip() for o in _env_origins.split(",") if o.strip())
+
+logger.info(f"CORS allowed origins: {_allowed_origins}")
 
 CORS(
     app,
-    resources={r"/api/*": {"origins": _default_origins}},
+    resources={r"/*": {"origins": _allowed_origins}},
     expose_headers=["Content-Disposition"],
     supports_credentials=False,
     max_age=600,
