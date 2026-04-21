@@ -166,6 +166,10 @@ class CalculationResult:
     order_deadline: str | None = None
     monthly_plan: list[MonthlyPlanResult] = field(default_factory=list)
 
+    # Trend detection
+    trend_pct: float | None = None
+    trend_label: str = "—"  # "+X%", "-X%", "New", "Discontinued", "—"
+
     # ABC metadata
     is_price_missing: bool = False
 
@@ -259,6 +263,9 @@ class CalculationOptions:
     date_from: datetime | None = None
     date_to: datetime | None = None
 
+    # Trend detection
+    trend_mode: str = "none"  # "short" / "yoy" / "none"
+
 
 @dataclass
 class CalculationRequest:
@@ -333,6 +340,8 @@ class SafetyStockCalculator:
             material_master: dict[str, Any] | None = None,
             date_from: datetime | None = None,
             date_to: datetime | None = None,
+            trend_mode: str = "none",
+            working_days_per_month: int | None = None,
     ) -> tuple[list[CalculationResult], list[ExcludedItem], CalculationSummary]:
         """
         Execute the complete safety stock calculation.
@@ -380,6 +389,8 @@ class SafetyStockCalculator:
             group_lead_times=group_lead_times,
             date_from=date_from,
             date_to=date_to,
+            trend_mode=trend_mode,
+            working_days_per_month=working_days_per_month,
         )
 
         # ✅ v4.3.4: 日誌輸出參數資訊
@@ -428,6 +439,8 @@ class SafetyStockCalculator:
             group_lead_times: dict[str, int] | None = None,
             date_from: datetime | None = None,
             date_to: datetime | None = None,
+            trend_mode: str = "none",
+            working_days_per_month: int | None = None,
     ) -> CalculationOptions:
         """Create calculation options with overrides applied to defaults."""
         # Resolve granularity
@@ -508,6 +521,12 @@ class SafetyStockCalculator:
             options.date_from = date_from
         if date_to is not None:
             options.date_to = date_to
+
+        if trend_mode in ("short", "yoy", "none"):
+            options.trend_mode = trend_mode
+
+        if working_days_per_month is not None and options.granularity == Granularity.MONTHLY:
+            options.days_per_period = working_days_per_month
 
         return options
 
@@ -1036,6 +1055,11 @@ class SafetyStockCalculator:
                 variance = sum((v - mean_val) ** 2 for v in smoothed_values) / (final_n - 1)
                 std_val = math.sqrt(variance)
 
+            # Trend detection
+            trend_pct, trend_label = self._calculate_trend(
+                period_values, options.trend_mode, options.selected_months, period_keys,
+            )
+
             items.append({
                 **item,
                 "monthly_values": period_values,
@@ -1049,6 +1073,8 @@ class SafetyStockCalculator:
                 "outliers": outliers,
                 "outliers_removed": outliers_removed,
                 "has_insufficient_samples": final_n < options.min_confidence_samples,
+                "trend_pct": trend_pct,
+                "trend_label": trend_label,
             })
 
         return items
@@ -1061,6 +1087,129 @@ class SafetyStockCalculator:
         if n % 2 == 0:
             return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2
         return sorted_vals[mid]
+
+    @staticmethod
+    def _calculate_trend(
+            values: list[float],
+            mode: str,
+            selected_months: list[int],
+            period_keys: list[str],
+    ) -> tuple[float | None, str]:
+        """
+        Calculate trend percentage.
+
+        Returns (trend_pct, trend_label):
+          trend_pct: float percentage or None
+          trend_label: "+X%", "-X%", "New", "Discontinued", "—"
+
+        Priority:
+          1. all zero → "—"
+          2. < 4 periods → "—"
+          3. non-contiguous selectedMonths (short mode) → "—"
+          4. first_half=0, second_half>0 → "New"
+          5. first_half>0, second_half=0 → "Discontinued"
+          6. normal → "+X%" / "-X%"
+        """
+        if mode == "none" or not values:
+            return None, "—"
+
+        if mode == "yoy":
+            return SafetyStockCalculator._calculate_trend_yoy(values, period_keys)
+
+        # --- Short-term trend ---
+
+        # Rule 1: all zero
+        if all(v == 0 for v in values):
+            return None, "—"
+
+        # Rule 2: < 4 periods
+        if len(values) < 4:
+            return None, "—"
+
+        # Rule 3: non-contiguous selectedMonths
+        if selected_months and len(selected_months) > 1:
+            sorted_sm = sorted(selected_months)
+            for i in range(1, len(sorted_sm)):
+                if sorted_sm[i] - sorted_sm[i - 1] > 1:
+                    # Exception: 11,12,1,2 is contiguous (wraps around year)
+                    if not (sorted_sm[-1] == 12 and sorted_sm[0] == 1):
+                        return None, "—"
+
+        # Split into halves (odd length: drop middle)
+        n = len(values)
+        mid = n // 2
+        first_half = values[:mid]
+        second_half = values[mid + 1:] if n % 2 != 0 else values[mid:]
+
+        first_avg = sum(first_half) / len(first_half) if first_half else 0
+        second_avg = sum(second_half) / len(second_half) if second_half else 0
+
+        # Rule 4: New (first=0, second>0)
+        if first_avg == 0 and second_avg > 0:
+            return None, "New"
+
+        # Rule 5: Discontinued (first>0, second=0)
+        if first_avg > 0 and second_avg == 0:
+            return None, "Discontinued"
+
+        # Rule 6: normal calculation
+        if first_avg == 0:
+            return None, "—"
+
+        pct = ((second_avg - first_avg) / first_avg) * 100
+        label = f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%"
+        return round(pct, 1), label
+
+    @staticmethod
+    def _calculate_trend_yoy(
+            values: list[float],
+            period_keys: list[str],
+    ) -> tuple[float | None, str]:
+        """
+        YoY: compare latest two years using only months that exist in both.
+        """
+        if not period_keys or len(period_keys) < 2:
+            return None, "—"
+
+        # Group values by year
+        year_data: dict[int, dict[int, float]] = {}
+        for key, val in zip(period_keys, values):
+            try:
+                parts = key.split("-")
+                year = int(parts[0])
+                month = int(parts[1])
+            except (ValueError, IndexError):
+                continue
+            if year not in year_data:
+                year_data[year] = {}
+            year_data[year][month] = year_data[year].get(month, 0) + val
+
+        years = sorted(year_data.keys())
+        if len(years) < 2:
+            return None, "—"
+
+        # Latest two years
+        this_year = years[-1]
+        last_year = years[-2]
+
+        # Intersection of months
+        common_months = set(year_data[this_year].keys()) & set(year_data[last_year].keys())
+        if not common_months:
+            return None, "—"
+
+        last_avg = sum(year_data[last_year][m] for m in common_months) / len(common_months)
+        this_avg = sum(year_data[this_year][m] for m in common_months) / len(common_months)
+
+        if last_avg == 0 and this_avg > 0:
+            return None, "New"
+        if last_avg > 0 and this_avg == 0:
+            return None, "Discontinued"
+        if last_avg == 0:
+            return None, "—"
+
+        pct = ((this_avg - last_avg) / last_avg) * 100
+        label = f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%"
+        return round(pct, 1), label
 
     def _calculate_mad_statistics(
             self,
@@ -1359,6 +1508,8 @@ class SafetyStockCalculator:
                 outliers=item["outliers"],
                 outliers_removed=item["outliers_removed"],
                 has_insufficient_samples=item["has_insufficient_samples"],
+                trend_pct=item.get("trend_pct"),
+                trend_label=item.get("trend_label", "—"),
                 is_price_missing=item.get("is_price_missing", False),
                 monthly_values=item["monthly_values"],
                 price=item["price"],

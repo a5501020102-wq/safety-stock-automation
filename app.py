@@ -614,6 +614,19 @@ def calculate():
         except (ValueError, AttributeError):
             pass
 
+    trend_mode = params.get("trend_mode") or params.get("trendMode") or "none"
+    if trend_mode not in ("short", "yoy", "none"):
+        trend_mode = "none"
+
+    working_days = params.get("working_days_per_month") or params.get("workingDaysPerMonth")
+    if working_days is not None:
+        try:
+            working_days = int(working_days)
+            if not (1 <= working_days <= 31):
+                working_days = None
+        except (TypeError, ValueError):
+            working_days = None
+
     # --- Load data ----------------------------------------------------------
     try:
         sales_data = load_sales_data(sales_path)
@@ -666,6 +679,8 @@ def calculate():
                 material_master=_MATERIAL_MASTER or None,
                 date_from=date_from,
                 date_to=date_to,
+                trend_mode=trend_mode,
+                working_days_per_month=working_days,
             )
             # For the parameter snapshot, derive options from the (all) summary
             all_summary_obj = comparison_data["all"][2]
@@ -718,6 +733,8 @@ def calculate():
                 material_master=_MATERIAL_MASTER or None,
                 date_from=date_from,
                 date_to=date_to,
+                trend_mode=trend_mode,
+                working_days_per_month=working_days,
             )
 
             options_like = _OptionsSnapshot(

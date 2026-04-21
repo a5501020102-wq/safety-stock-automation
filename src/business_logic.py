@@ -149,6 +149,8 @@ def calculate_comparison_mode(
         material_master: Optional[Dict[str, Any]] = None,
         date_from: Any = None,
         date_to: Any = None,
+        trend_mode: str = "none",
+        working_days_per_month: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     對比模式：同時計算分倉(all)與總倉(total)
@@ -233,6 +235,8 @@ def calculate_comparison_mode(
             material_master=material_master,
             date_from=date_from,
             date_to=date_to,
+            trend_mode=trend_mode,
+            working_days_per_month=working_days_per_month,
         )
         logger.info(f"   ✅ 分倉計算完成: {len(results_all)} 筆")
 
@@ -1100,6 +1104,10 @@ def _serialize_results(results: List[Any]) -> List[Dict[str, Any]]:
 
             # --- MA 相關 ---
             "enable_ma": bool(getattr(r, "enable_ma", False)),
+
+            # --- 趨勢 ---
+            "trend_pct": getattr(r, "trend_pct", None),
+            "trend_label": getattr(r, "trend_label", "—"),
 
             # --- ABC 元數據 ---
             "is_price_missing": bool(getattr(r, "is_price_missing", False)),
