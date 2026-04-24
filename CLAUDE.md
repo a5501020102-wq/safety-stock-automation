@@ -151,6 +151,7 @@
 - **`_fill_missing_periods` 的 `selectedMonths`** 是「跳過」非「填零」。新功能若依賴 series 長度必須注意
 - **`working_days_per_month`** 只在 monthly granularity 下覆寫 `days_per_period`，影響所有計算（SS/ROP/Max/Daily）
 - **`localStorage` key 是 `ss-workflow:v1`** — 不可隨意改
+- **`src/business_logic.py` 的 Render import fallback** — Render 環境 `import calculator`（無前綴）會失敗，fallback 到 `Any` 型別（本地開發路徑不同所以正常）。影響：Render 上型別檢查失效，但運作正常。待修：統一改成 `from src.calculator import ...` 或相對 import。發現於 2026-04-24 Step 1 部署時觀察 build log。
 
 ---
 
