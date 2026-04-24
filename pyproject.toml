@@ -1,0 +1,104 @@
+[tool.poetry]
+name = "safety-stock-automation"
+version = "5.1.0"
+description = "管材建材業採購安全庫存計算 API"
+authors = ["sale18"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pandas = ">=2.0.0,<3.0.0"
+numpy = ">=1.26.0,<2.1.0"
+openpyxl = ">=3.0.0"
+xlrd = ">=2.0.1"
+xlsxwriter = ">=3.0.0"
+flask = ">=3.0.0,<4.0.0"
+flask-cors = ">=4.0.0"
+werkzeug = ">=3.0.0"
+gunicorn = ">=21.2.0"
+plotly = ">=5.17.0"
+pyyaml = ">=6.0"
+python-dateutil = ">=2.8.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "ruff (>=0.15.11,<0.16.0)",
+    "pytest (>=9.0.3,<10.0.0)",
+    "pytest-cov (>=7.1.0,<8.0.0)"
+]
+
+# ============================================================================
+# Ruff — Python linter / formatter
+# ============================================================================
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort（import 排序）
+    "UP",   # pyupgrade（Python 版本升級建議）
+    "B",    # flake8-bugbear（常見 bug 模式）
+    "SIM",  # flake8-simplify（可簡化的寫法）
+    "N",    # pep8-naming（命名規範）
+]
+ignore = [
+    "E501",   # line-length 由 formatter 處理
+    "N802",   # function name should be lowercase（既有程式碼有駝峰命名）
+    "N803",   # argument name should be lowercase（同上）
+    "N806",   # variable in function should be lowercase（同上）
+    "B008",   # function call in default argument（Flask 常見模式）
+    # --- technical debt: 以下為既有程式碼的風格，短期內不值得改動 ---
+    "SIM108", # ternary operator 建議 — 既有 if/else 語義更清楚
+    "SIM102", # nested if 合併建議 — 巢狀有語義區分（主條件 vs 例外）
+    "B028",   # warnings.warn stacklevel — config_loader 初始化時僅觸發一次
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+# ============================================================================
+# Pytest
+# ============================================================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "unit: 單元測試",
+    "integration: 整合測試",
+    "slow: 執行較慢的測試",
+]
+
+# ============================================================================
+# Coverage
+# ============================================================================
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/__pycache__/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
+fail_under = 0
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]

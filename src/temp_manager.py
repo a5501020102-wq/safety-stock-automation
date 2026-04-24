@@ -27,7 +27,6 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +67,7 @@ def get_temp_path(file_id: str, ext: str) -> Path:
     return _TEMP_DIR / f"{file_id}{ext}"
 
 
-def find_file(file_id: str) -> Optional[Path]:
+def find_file(file_id: str) -> Path | None:
     """
     Locate a file by its file_id regardless of extension.
 

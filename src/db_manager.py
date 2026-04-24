@@ -4,17 +4,16 @@ Database Manager for SS Automation.
 """
 
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from .calculator import (
-    ABCClass,
     CalculationResult,
     CalculationSummary,
     ExcludedItem,
-    StockStatus,
 )
 from .config_loader import config
 
@@ -144,11 +143,11 @@ class DatabaseManager:
 
             # Indexes for common queries
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ss_results_run_id 
+                CREATE INDEX IF NOT EXISTS idx_ss_results_run_id
                 ON ss_results(run_id)
             """)
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ss_results_site_sku 
+                CREATE INDEX IF NOT EXISTS idx_ss_results_site_sku
                 ON ss_results(site, sku)
             """)
 
@@ -173,7 +172,7 @@ class DatabaseManager:
             """)
 
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_change_history_site_sku 
+                CREATE INDEX IF NOT EXISTS idx_change_history_site_sku
                 ON ss_change_history(site, sku)
             """)
 
@@ -572,7 +571,7 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             cursor.execute("""
-                SELECT 
+                SELECT
                     r.safety_stock,
                     r.mean_demand,
                     r.std_dev,

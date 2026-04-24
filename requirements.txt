@@ -1,36 +1,24 @@
-# ============================================================================
-# Safety Stock Automation - Render Deployment
-# Version: 5.0.0 (Stateless API)
-# Last Updated: 2026-04-15
-# ============================================================================
-#
-# NOTE: Do NOT add `pathlib` here — it's stdlib since Python 3.4.
-# Installing the PyPI backport breaks the standard library.
-
-# ============================================================================
-# 核心數據處理
-# ============================================================================
-pandas>=2.0.0,<3.0.0
-numpy>=1.26.0,<2.1.0
-openpyxl>=3.0.0
-xlrd>=2.0.1
-xlsxwriter>=3.0.0
-
-# ============================================================================
-# Web 框架（Flask API）
-# ============================================================================
-Flask>=3.0.0,<4.0.0
-Flask-Cors>=4.0.0
-werkzeug>=3.0.0
-gunicorn>=21.2.0
-
-# ============================================================================
-# 資料可視化（僅 legacy Jinja UI 使用）
-# ============================================================================
-plotly>=5.17.0
-
-# ============================================================================
-# 配置與工具
-# ============================================================================
-pyyaml>=6.0
-python-dateutil>=2.8.0
+blinker==1.9.0 ; python_version >= "3.10" and python_version < "4.0"
+click==8.3.3 ; python_version >= "3.10" and python_version < "4.0"
+colorama==0.4.6 ; python_version >= "3.10" and python_version < "4.0" and platform_system == "Windows"
+et-xmlfile==2.0.0 ; python_version >= "3.10" and python_version < "4.0"
+flask-cors==6.0.2 ; python_version >= "3.10" and python_version < "4.0"
+flask==3.1.3 ; python_version >= "3.10" and python_version < "4.0"
+gunicorn==25.3.0 ; python_version >= "3.10" and python_version < "4.0"
+itsdangerous==2.2.0 ; python_version >= "3.10" and python_version < "4.0"
+jinja2==3.1.6 ; python_version >= "3.10" and python_version < "4.0"
+markupsafe==3.0.3 ; python_version >= "3.10" and python_version < "4.0"
+narwhals==2.20.0 ; python_version >= "3.10" and python_version < "4.0"
+numpy==2.0.2 ; python_version >= "3.10" and python_version < "4.0"
+openpyxl==3.1.5 ; python_version >= "3.10" and python_version < "4.0"
+packaging==26.1 ; python_version >= "3.10" and python_version < "4.0"
+pandas==2.3.3 ; python_version >= "3.10" and python_version < "4.0"
+plotly==6.7.0 ; python_version >= "3.10" and python_version < "4.0"
+python-dateutil==2.9.0.post0 ; python_version >= "3.10" and python_version < "4.0"
+pytz==2026.1.post1 ; python_version >= "3.10" and python_version < "4.0"
+pyyaml==6.0.3 ; python_version >= "3.10" and python_version < "4.0"
+six==1.17.0 ; python_version >= "3.10" and python_version < "4.0"
+tzdata==2026.1 ; python_version >= "3.10" and python_version < "4.0"
+werkzeug==3.1.8 ; python_version >= "3.10" and python_version < "4.0"
+xlrd==2.0.2 ; python_version >= "3.10" and python_version < "4.0"
+xlsxwriter==3.2.9 ; python_version >= "3.10" and python_version < "4.0"

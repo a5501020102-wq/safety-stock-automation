@@ -3,6 +3,7 @@
 __pycache__/
 *.pyo
 *.pyd
+.venv/
 
 # Flask
 flask_session/
@@ -42,18 +43,23 @@ mainbackup/
 .DS_Store
 Thumbs.db
 
-# 測試和臨時檔案
-test_*.py
-test_*.txt
+# 臨時檔案
 Pycharm diagnose.py
 scripts/
-tests/
+
+# Poetry 本機設定（virtualenvs.in-project 等，不進 repo）
+poetry.toml
 
 # 配置
 config/
 
 # SAP 測試資料
 Sap/
+
+# 測試用真實資料（含機密 SAP 資料，永遠不進 repo）
+tests/fixtures/real_data/*
+!tests/fixtures/real_data/README.md
+tests/fixtures/sap_*.json
 
 # 舊版本和其他檔案
 web_app.py_v*.py

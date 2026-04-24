@@ -11,7 +11,6 @@ Author: 松鼠
 
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -123,7 +122,7 @@ class HistoryManager:
             return []
 
         try:
-            with open(self.history_file, 'r', encoding='utf-8') as f:
+            with open(self.history_file, encoding='utf-8') as f:
                 return json.load(f)
         except json.JSONDecodeError:
             logger.warning("歷史檔案格式錯誤,將重新建立")

@@ -15,8 +15,6 @@ Last Updated: 2026-04-15
 
 from __future__ import annotations
 
-from typing import Tuple
-
 
 class ErrorCode:
     # ---- Upload / File validation ----
@@ -126,7 +124,7 @@ HTTP_STATUS: dict[str, int] = {
 }
 
 
-def error_response(code: str, message: str | None = None, **extra) -> Tuple[dict, int]:
+def error_response(code: str, message: str | None = None, **extra) -> tuple[dict, int]:
     """
     Convenience: return both payload and HTTP status for Flask routes.
 

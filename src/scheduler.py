@@ -8,9 +8,7 @@ This module handles:
 - Schedule configuration and status
 """
 
-import json
 import logging
-import os
 import platform
 import subprocess
 import sys
@@ -19,8 +17,6 @@ from datetime import datetime, time
 from enum import Enum
 from pathlib import Path
 from typing import Any
-
-from .config_loader import config
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +188,6 @@ class WindowsScheduler:
 
             # Extract info
             enabled = details.get("Scheduled Task State", "").lower() == "enabled"
-            next_run_str = details.get("Next Run Time", "")
-            last_run_str = details.get("Last Run Time", "")
             last_result = details.get("Last Result", "")
 
             # Parse dates (format varies by locale)

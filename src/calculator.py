@@ -40,15 +40,13 @@ from dateutil.relativedelta import relativedelta
 
 from .config_loader import config
 from .models import (
+    KEY_DELIMITER,
+    ABCClass,
     PlanData,
-    PlanItemData,
     SalesData,
     StockStatus,
-    ABCClass,
-    KEY_DELIMITER,
 )
 from .utils import calculate_order_deadline, create_composite_key
-
 
 # ============================================================================
 # Granularity Enum
@@ -394,7 +392,7 @@ class SafetyStockCalculator:
         )
 
         # ✅ v4.3.4: 日誌輸出參數資訊
-        logger.info(f"📊 計算參數：")
+        logger.info("📊 計算參數：")
         logger.info(f"   服務水準: A={options.z_scores['A']:.2f}, "
                     f"B={options.z_scores['B']:.2f}, "
                     f"C={options.z_scores['C']:.2f}")
@@ -688,7 +686,7 @@ class SafetyStockCalculator:
         if skipped_rows > 0:
             logger.info(f"  ℹ 跳過 {skipped_rows} 筆無效資料")
 
-        for comp_key, item in aggregated_data.items():
+        for _comp_key, item in aggregated_data.items():
             tl = item["timeline"]
             for period_key in list(tl.keys()):
                 if tl[period_key] < 0:
@@ -980,7 +978,7 @@ class SafetyStockCalculator:
         items = []
         granularity = options.granularity
 
-        for key, item in aggregated.items():
+        for _key, item in aggregated.items():
             filled_values, missing_count, total_periods, period_keys = self._fill_missing_periods(
                 item["timeline"],
                 granularity,
@@ -1173,7 +1171,7 @@ class SafetyStockCalculator:
 
         # Group values by year
         year_data: dict[int, dict[int, float]] = {}
-        for key, val in zip(period_keys, values):
+        for key, val in zip(period_keys, values, strict=True):
             try:
                 parts = key.split("-")
                 year = int(parts[0])
@@ -1231,12 +1229,10 @@ class SafetyStockCalculator:
         if options is None:
             mad_constant = MAD_TO_SIGMA_CONSTANT
             mad_multiplier = 3
-            min_sample_size = 2
             outlier_enabled = True
         else:
             mad_constant = options.mad_constant
             mad_multiplier = options.mad_multiplier
-            min_sample_size = options.min_sample_size
             outlier_enabled = options.enable_outlier_detection
 
         if not values:

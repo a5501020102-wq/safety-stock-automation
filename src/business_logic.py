@@ -29,11 +29,11 @@ Last Updated: 2026-01-29
 
 from __future__ import annotations
 
-from typing import Optional, Dict, List, Tuple, Any, Union
-from datetime import datetime
-from io import BytesIO
 import logging
 import math
+from io import BytesIO
+from typing import Any
+
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -44,11 +44,11 @@ logger = logging.getLogger(__name__)
 
 try:
     from src.calculator import SafetyStockCalculator
-    from src.models import CalculationResult, ExcludedItem, CalculationSummary
+    from src.models import CalculationResult, CalculationSummary, ExcludedItem
 except ImportError:
     try:
         from calculator import SafetyStockCalculator
-        from models import CalculationResult, ExcludedItem, CalculationSummary
+        from models import CalculationResult, CalculationSummary, ExcludedItem
     except ImportError as e:
         logger.warning(f"無法導入模型（將使用 Any fallback）：{e}")
         SafetyStockCalculator = Any
@@ -132,26 +132,26 @@ def _resolve_cv(r: Any) -> float:
 def calculate_comparison_mode(
         calculator: SafetyStockCalculator,
         sales_data: Any,
-        price_data: Optional[Dict[str, float]] = None,
-        plan_data: Optional[Any] = None,
-        selected_months: Optional[List[int]] = None,
+        price_data: dict[str, float] | None = None,
+        plan_data: Any | None = None,
+        selected_months: list[int] | None = None,
         min_months: int = 2,
         lead_time: int = 30,
         enable_outlier: bool = True,
         enable_ma: bool = False,
         ma_window: int = 3,
-        z_scores: Optional[Dict[str, float]] = None,
-        abc_thresholds: Optional[Dict[str, float]] = None,
+        z_scores: dict[str, float] | None = None,
+        abc_thresholds: dict[str, float] | None = None,
         max_date: Any = None,
         granularity: str = "monthly",
-        category_lead_times: Optional[Dict[str, int]] = None,
-        group_lead_times: Optional[Dict[str, int]] = None,
-        material_master: Optional[Dict[str, Any]] = None,
+        category_lead_times: dict[str, int] | None = None,
+        group_lead_times: dict[str, int] | None = None,
+        material_master: dict[str, Any] | None = None,
         date_from: Any = None,
         date_to: Any = None,
         trend_mode: str = "none",
-        working_days_per_month: Optional[int] = None,
-) -> Dict[str, Any]:
+        working_days_per_month: int | None = None,
+) -> dict[str, Any]:
     """
     對比模式：同時計算分倉(all)與總倉(total)
 
@@ -206,7 +206,7 @@ def calculate_comparison_mode(
     # ========================================
     # 執行計算
     # ========================================
-    logger.info(f"📊 對比模式計算開始")
+    logger.info("📊 對比模式計算開始")
     logger.info(f"   服務水準: A={z_scores['A']:.2f}, B={z_scores['B']:.2f}, C={z_scores['C']:.2f}")
     logger.info(f"   ABC門檻: A={abc_thresholds['A']:.0%}, B={abc_thresholds['B']:.0%}")
 
@@ -214,7 +214,7 @@ def calculate_comparison_mode(
         # ========================================
         # 分倉模式
         # ========================================
-        logger.info(f"   → 計算分倉模式...")
+        logger.info("   → 計算分倉模式...")
         results_all, excluded_all, summary_all = calculator.calculate(
             sales_data=sales_data,
             price_data=price_data,
@@ -243,7 +243,7 @@ def calculate_comparison_mode(
         # ========================================
         # 總倉模式
         # ========================================
-        logger.info(f"   → 計算總倉模式...")
+        logger.info("   → 計算總倉模式...")
         results_total, excluded_total, summary_total = calculator.calculate(
             sales_data=sales_data,
             price_data=price_data,
@@ -272,7 +272,7 @@ def calculate_comparison_mode(
     # ========================================
     # 對比分析（安全計算）
     # ========================================
-    logger.info(f"   → 生成對比分析...")
+    logger.info("   → 生成對比分析...")
 
     total_ss_all = sum(_safe_float(getattr(r, "safety_stock", 0), 0) for r in (results_all or []))
     total_ss_total = sum(_safe_float(getattr(r, "safety_stock", 0), 0) for r in (results_total or []))
@@ -291,7 +291,7 @@ def calculate_comparison_mode(
     if total_value_all > 0:
         savings_value_pct = (cost_saved / total_value_all) * 100
 
-    logger.info(f"   ✅ 對比分析完成")
+    logger.info("   ✅ 對比分析完成")
     logger.info(f"      節省數量: {int(inventory_saved)} ({savings_pct:.2f}%)")
     logger.info(f"      節省金額: ${cost_saved:.2f} ({savings_value_pct:.2f}%)")
 
@@ -336,12 +336,12 @@ def calculate_comparison_mode(
 # ============================================================================
 
 def get_ma_detail_for_sku(
-        results: List[Any],
+        results: list[Any],
         site: str,
         sku: str,
         sales_data: Any,
         ma_window: int = 3
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     取得單一 SKU 的移動平均分析詳情
 
@@ -357,11 +357,11 @@ def get_ma_detail_for_sku(
     """
     # 導入工具函數
     try:
-        from src.utils import group_by_quarter, parse_year_month, get_quarter
+        from src.utils import get_quarter, group_by_quarter, parse_year_month
     except ImportError:
         logger.warning("無法從 src.utils 導入，使用本地函數")
 
-        def parse_year_month(ym: str) -> Tuple[int, int]:
+        def parse_year_month(ym: str) -> tuple[int, int]:
             try:
                 year, month = ym.split("-")
                 return int(year), int(month)
@@ -377,8 +377,8 @@ def get_ma_detail_for_sku(
                 return "Q3"
             return "Q4"
 
-        def group_by_quarter(monthly_data: Dict[str, float]) -> Dict[str, List[Tuple[str, float]]]:
-            quarters: Dict[str, List[Tuple[str, float]]] = {}
+        def group_by_quarter(monthly_data: dict[str, float]) -> dict[str, list[tuple[str, float]]]:
+            quarters: dict[str, list[tuple[str, float]]] = {}
             for ym, value in sorted(monthly_data.items()):
                 year, month = parse_year_month(ym)
                 if year == 0:
@@ -422,7 +422,7 @@ def get_ma_detail_for_sku(
     if not monthly_demand:
         return None
 
-    quarterly_summary: Dict[str, Dict[str, Any]] = {}
+    quarterly_summary: dict[str, dict[str, Any]] = {}
     quarterly_data = group_by_quarter(monthly_demand)
 
     for quarter, months in sorted(quarterly_data.items()):
@@ -465,7 +465,7 @@ def get_ma_detail_for_sku(
     }
 
 
-def _find_filled_months(monthly_demand: Dict[str, float], parse_year_month) -> List[str]:
+def _find_filled_months(monthly_demand: dict[str, float], parse_year_month) -> list[str]:
     """找出需要填補的月份（連續月份中缺失的）"""
     sorted_months = sorted(monthly_demand.keys())
     if not sorted_months:
@@ -480,7 +480,7 @@ def _find_filled_months(monthly_demand: Dict[str, float], parse_year_month) -> L
     if start_year == 0 or end_year == 0:
         return []
 
-    all_months: List[str] = []
+    all_months: list[str] = []
     current_year, current_month = start_year, start_month
 
     max_iterations = 365
@@ -502,7 +502,7 @@ def _find_filled_months(monthly_demand: Dict[str, float], parse_year_month) -> L
     return [m for m in all_months if m not in monthly_demand]
 
 
-def _generate_recommendation(result: Any) -> Dict[str, str]:
+def _generate_recommendation(result: Any) -> dict[str, str]:
     """根據 CV 值生成移動平均建議"""
     std_dev = _safe_float(getattr(result, "std_dev", 0), 0)
     mean_demand = _safe_float(getattr(result, "mean_demand", 0), 0)
@@ -524,7 +524,7 @@ def _generate_recommendation(result: Any) -> Dict[str, str]:
 # Excel 匯出功能
 # ============================================================================
 
-def export_to_excel(results: List[Any], excluded: List[Any], summary: Any,
+def export_to_excel(results: list[Any], excluded: list[Any], summary: Any,
                     granularity: str = "monthly") -> bytes:
     """
     匯出計算結果為 Excel 檔案
@@ -551,8 +551,8 @@ def export_to_excel(results: List[Any], excluded: List[Any], summary: Any,
         output.seek(0)
         return output.read()
 
-    except ImportError:
-        raise ImportError("請安裝 xlsxwriter: pip install xlsxwriter")
+    except ImportError as err:
+        raise ImportError("請安裝 xlsxwriter: pip install xlsxwriter") from err
     except Exception as e:
         logger.exception(f"Excel 匯出失敗：{e}")
         raise ValueError(f"無法匯出 Excel：{str(e)}") from e
@@ -567,7 +567,7 @@ def _period_labels(granularity: str = "monthly") -> tuple:
     return "活躍月數", "月平均需求"
 
 
-def _result_to_row(r: Any, granularity: str = "monthly") -> Dict[str, Any]:
+def _result_to_row(r: Any, granularity: str = "monthly") -> dict[str, Any]:
     """將單一 CalculationResult 轉為 Excel / 匯出用的 dict（共用邏輯）"""
     mean_demand = _safe_float(getattr(r, "mean_demand", 0), 0)
     std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
@@ -597,14 +597,14 @@ def _result_to_row(r: Any, granularity: str = "monthly") -> Dict[str, Any]:
     }
 
 
-def _write_results_sheet(writer, results: List[Any], sheet_name: str = "計算結果",
+def _write_results_sheet(writer, results: list[Any], sheet_name: str = "計算結果",
                          granularity: str = "monthly") -> None:
     """寫入計算結果工作表（支援自訂工作表名稱）"""
     rows = [_result_to_row(r, granularity) for r in results]
     pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
 
 
-def _write_excluded_sheet(writer, excluded: List[Any], granularity: str = "monthly") -> None:
+def _write_excluded_sheet(writer, excluded: list[Any], granularity: str = "monthly") -> None:
     """寫入排除項目工作表"""
     active_label = _period_labels(granularity)[0]
     rows = []
@@ -668,7 +668,7 @@ def _write_summary_sheet(writer, summary: Any) -> None:
 # ============================================================================
 
 def export_to_sap_mm17(
-        results: List[Any],
+        results: list[Any],
         summary: Any,
         format: str = 'xlsx',
         include_header: bool = True
@@ -738,7 +738,7 @@ def export_to_sap_mm17(
             encoding='utf-8-sig'  # 支援中文（如果有）
         )
         output.seek(0)
-        logger.info(f"✅ CSV 匯出成功")
+        logger.info("✅ CSV 匯出成功")
         return output.read()
 
     elif format == 'xlsx':
@@ -776,11 +776,11 @@ def export_to_sap_mm17(
                         worksheet.write(0, col_num, value, header_format)
 
             output.seek(0)
-            logger.info(f"✅ XLSX 匯出成功")
+            logger.info("✅ XLSX 匯出成功")
             return output.read()
 
-        except ImportError:
-            raise ImportError("請安裝 xlsxwriter: pip install xlsxwriter")
+        except ImportError as err:
+            raise ImportError("請安裝 xlsxwriter: pip install xlsxwriter") from err
     else:
         raise ValueError(f"不支援的格式: {format}")
 
@@ -811,13 +811,12 @@ def export_comparison_to_excel(
     results_all, excluded_all, summary_all = all_data
     results_total, excluded_total, summary_total = total_data
 
-    logger.info(f"📊 開始匯出對比模式 Excel")
+    logger.info("📊 開始匯出對比模式 Excel")
     logger.info(f"   分倉數據: {len(results_all)} 筆")
     logger.info(f"   總倉數據: {len(results_total)} 筆")
 
     try:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            workbook = writer.book
 
             # ========================================
             # Sheet 1: 對比摘要
@@ -855,7 +854,7 @@ def export_comparison_to_excel(
                 index=False
             )
 
-            logger.info(f"✅ Sheet 1: 對比摘要 - 完成")
+            logger.info("✅ Sheet 1: 對比摘要 - 完成")
 
             # ========================================
             # Sheet 2: 分倉計算
@@ -928,7 +927,7 @@ def export_comparison_to_excel(
                 )
                 logger.info(f"✅ Sheet 4: 差異分析 - {len(diff_rows)} 筆（差異 > 5%）")
             else:
-                logger.info(f"⚠️  Sheet 4: 差異分析 - 無顯著差異項目")
+                logger.info("⚠️  Sheet 4: 差異分析 - 無顯著差異項目")
 
             # ========================================
             # Sheet 5: 排除項目
@@ -939,7 +938,7 @@ def export_comparison_to_excel(
                 logger.info(f"✅ Sheet 5: 排除項目 - {len(all_excluded)} 筆")
 
         output.seek(0)
-        logger.info(f"🎉 對比模式 Excel 匯出完成")
+        logger.info("🎉 對比模式 Excel 匯出完成")
         return output.read()
 
     except Exception as e:
@@ -954,7 +953,7 @@ def export_comparison_to_excel(
 # JSON 序列化（v4.2.3）
 # ============================================================================
 
-def serialize_results_for_json(results: List[Any], excluded: List[Any], summary: Any) -> Dict[str, Any]:
+def serialize_results_for_json(results: list[Any], excluded: list[Any], summary: Any) -> dict[str, Any]:
     """
     將計算結果序列化為 JSON 格式
 
@@ -973,7 +972,7 @@ def serialize_results_for_json(results: List[Any], excluded: List[Any], summary:
     }
 
 
-def _serialize_summary(summary: Any) -> Dict[str, Any]:
+def _serialize_summary(summary: Any) -> dict[str, Any]:
     """序列化計算摘要"""
     run_date = getattr(summary, "run_date", None)
     return {
@@ -993,7 +992,7 @@ def _serialize_summary(summary: Any) -> Dict[str, Any]:
     }
 
 
-def _serialize_results(results: List[Any]) -> List[Dict[str, Any]]:
+def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
     """
     ✅ v4.2.3 修復版本：正確讀取後端欄位 + 備用計算
 
@@ -1003,7 +1002,7 @@ def _serialize_results(results: List[Any]) -> List[Dict[str, Any]]:
     3. max_inventory：先讀取，沒有才計算
     4. 優化重複的安全轉換
     """
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
 
     for r in (results or []):
         # === 基礎欄位 ===
@@ -1119,9 +1118,9 @@ def _serialize_results(results: List[Any]) -> List[Dict[str, Any]]:
     return out
 
 
-def _serialize_excluded(excluded: List[Any]) -> List[Dict[str, Any]]:
+def _serialize_excluded(excluded: list[Any]) -> list[dict[str, Any]]:
     """序列化排除項目"""
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for e in (excluded or []):
         out.append({
             "site": getattr(e, "site", None),
@@ -1144,7 +1143,7 @@ __author__ = "松鼠"
 __last_updated__ = "2026-01-29"
 
 
-def get_version_info() -> Dict[str, str]:
+def get_version_info() -> dict[str, str]:
     """取得版本資訊"""
     return {
         "version": __version__,

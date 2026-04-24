@@ -38,9 +38,8 @@ from .models import (
     MonthlyPlanData,
     PlanData,
     PlanItemData,
-    SalesData,
     PriceData,
-    KEY_DELIMITER,
+    SalesData,
 )
 
 logger = logging.getLogger(__name__)
@@ -484,7 +483,7 @@ def load_price_data(file_path: str | Path) -> PriceData:
         df = df[df["price"] > 0].copy()
 
         # If duplicate SKUs, keep last
-        price_map = dict(zip(df["sku"], df["price"]))
+        price_map = dict(zip(df["sku"], df["price"], strict=True))
 
         logger.info(f"✅ 載入完成: {len(price_map)} 個 SKU 價格")
 
