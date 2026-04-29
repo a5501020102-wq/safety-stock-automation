@@ -295,6 +295,7 @@ def _result_to_dict(result: CalculationResult) -> dict:
         'suggested_order': result.suggested_order if result.has_plan else None,
         'first_shortage_month': result.first_shortage_month,
         'order_deadline': result.order_deadline,
+        'turnover_rate': result.turnover_rate,
     }
 
 

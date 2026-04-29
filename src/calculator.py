@@ -163,6 +163,8 @@ class CalculationResult:
     first_shortage_month: str | None = None
     order_deadline: str | None = None
     monthly_plan: list[MonthlyPlanResult] = field(default_factory=list)
+    # 周轉率 = 銷貨總數 / 庫存數量（需要 plan 報表提供庫存數量）
+    turnover_rate: float | None = None
 
     # Trend detection
     trend_pct: float | None = None
@@ -1602,6 +1604,12 @@ class SafetyStockCalculator:
             result.status = self._determine_stock_health_with_plan(
                 result.final_stock, result.safety_stock, min_stock, options.overstock_multiplier
             )
+
+            # 周轉率 = 銷貨總數 / 庫存數量
+            # 只在庫存 > 0 時計算，避免除以零
+            # 負數庫存視為無效，不計算
+            if plan_item.current_stock > 0 and result.total_qty >= 0:
+                result.turnover_rate = round(result.total_qty / plan_item.current_stock, 2)
 
             integrated_count += 1
 

@@ -105,6 +105,9 @@ class TestPlanIntegrationBasic:
         assert r.plan_stock == 500.0
         assert r.final_stock is not None
         assert r.suggested_order >= 0
+        # 周轉率：total_qty=600, current_stock=500 → 1.2
+        assert r.turnover_rate is not None
+        assert isinstance(r.turnover_rate, float)
 
     def test_no_plan_fields_default(self, calc):
         """無 plan 時，plan 欄位應為預設值。"""
