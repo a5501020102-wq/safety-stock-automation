@@ -374,6 +374,7 @@ def _build_upload_metadata(
             "item_count": len(data.items),
             "detected_months": list(data.detected_months),
             "has_cumulative_columns": bool(data.has_cumulative_columns),
+            "planning_horizon": data.planning_horizon,
         }
 
     return base
