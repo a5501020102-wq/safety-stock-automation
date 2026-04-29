@@ -144,9 +144,21 @@ def _apply_fallback_aliases(
 
 
 def _normalize_string_col(df: pd.DataFrame, col: str) -> None:
-    """In-place normalize for string-ish identifier columns."""
+    """In-place normalize for string-ish identifier columns.
+
+    處理 Excel 數字欄位轉字串時的 float 尾巴問題：
+    1002.0 → "1002"（而非 "1002.0"）
+    """
     if col in df.columns:
-        df[col] = df[col].astype(str).str.strip()
+        def _to_clean_str(val: object) -> str:
+            if pd.isna(val):
+                return ""
+            # 如果是 float 且可以無損轉成 int（例如 1002.0），去掉 .0
+            if isinstance(val, float) and val == int(val):
+                return str(int(val)).strip()
+            return str(val).strip()
+
+        df[col] = df[col].apply(_to_clean_str)
 
 
 # =============================================================================
@@ -502,65 +514,201 @@ def load_price_data(file_path: str | Path) -> PriceData:
 # =============================================================================
 
 def load_plan_data(file_path: str | Path) -> PlanData:
-    """載入庫存計劃"""
+    """載入庫存計劃（v5.1.1: 新增 fallback aliases + MRP 欄位解析）"""
     file_path = Path(file_path)
 
     if not file_path.exists():
         raise FileNotFoundError(f"庫存計劃檔案不存在: {file_path}")
 
-    logger.info(f"📂 載入庫存計劃: {file_path.name}")
+    logger.info(f"載入庫存計劃: {file_path.name}")
+
+    # Plan 欄位的 fallback aliases（與 sales_aliases 的 site/sku 保持一致）
+    plan_aliases: dict[str, str] = {
+        # 出貨點 / 倉庫
+        "出貨點": "site",
+        "工廠": "site",
+        "銷售組織": "site",
+        "倉別": "site",
+        "倉庫": "site",
+        "據點": "site",
+        # SKU / 料號
+        "料號": "sku",
+        "品號": "sku",
+        "物料": "sku",
+        "物料編號": "sku",
+        "產品編號": "sku",
+        "料件編號": "sku",
+        # 品名（選填，不在 required 中）
+        "品名": "name",
+        "產品名稱": "name",
+        "料品名稱": "name",
+        "名稱": "name",
+        "料號說明": "name",
+        # 庫存數量
+        "庫存數量": "current_stock",
+        "現有庫存": "current_stock",
+        "在庫量": "current_stock",
+        "庫存量": "current_stock",
+        "可用庫存": "current_stock",
+        "期末庫存": "current_stock",
+        # 月平均銷售數量（選填）
+        "月平均銷售數量": "avg_monthly_demand",
+        # SAP 安全庫存（選填，讀入但不顯示在前端）
+        "安全庫存": "sap_safety_stock",
+    }
 
     try:
         df = pd.read_excel(file_path)
 
+        # Step 1: Config-based mapping（優先）
         mapper = ColumnMapper()
         df = mapper.map_columns(df)
 
+        # Step 2: Fallback aliases（Config 未命中時啟用）
         required_cols = ["site", "sku", "current_stock"]
+        df = _apply_fallback_aliases(df, required_cols, plan_aliases, "庫存計劃")
+
+        # Step 3: 驗證必要欄位
         missing_cols = set(required_cols) - set(df.columns)
         if missing_cols:
+            # 同時顯示中英文欄位名，方便使用者對照
+            friendly = {"site": "工廠/出貨點", "sku": "料號", "current_stock": "庫存數量"}
+            missing_zh = [f"{col}({friendly.get(col, col)})" for col in sorted(missing_cols)]
             raise DataLoadError(
-                f"❌ 庫存計劃缺少必要欄位: {missing_cols}\n"
-                f"📋 可用欄位: {list(df.columns)}"
+                f"庫存計劃缺少必要欄位: {', '.join(missing_zh)}\n"
+                f"可用欄位: {list(df.columns)}"
             )
 
         _normalize_string_col(df, "site")
         _normalize_string_col(df, "sku")
 
-        detected_months = _detect_month_columns(df.columns)
-
-        if not detected_months:
-            logger.warning("⚠️ 未偵測到任何月份欄位 (YYYYMM 格式)")
-            detected_months = []
-
-        logger.info(f"📅 偵測到 {len(detected_months)} 個月份: {detected_months}")
+        # Step 4: 月份偵測（先嘗試 MRP 格式，fallback 到純 YYYYMM）
+        mrp_columns = _parse_mrp_columns(df.columns)
+        if mrp_columns:
+            detected_months = sorted(mrp_columns.keys())
+            logger.info(f"偵測到 MRP 格式欄位: {len(detected_months)} 個月份: {detected_months}")
+        else:
+            detected_months = _detect_month_columns(df.columns)
+            mrp_columns = {}
+            if not detected_months:
+                logger.warning("未偵測到任何月份欄位")
+            else:
+                logger.info(f"偵測到 {len(detected_months)} 個月份: {detected_months}")
 
         has_cumulative = any(("累計" in str(col)) or ("cumulative" in str(col).lower()) for col in df.columns)
+
+        # Step 5: 推導時間戳
+        planning_horizon = (
+            f"{detected_months[0]}-{detected_months[-1]}"
+            if detected_months else None
+        )
+        source_filename = file_path.name
 
         plan_data = PlanData(
             detected_months=sorted(detected_months),
             has_cumulative_columns=has_cumulative,
+            planning_horizon=planning_horizon,
+            source_filename=source_filename,
         )
 
         for _, row in df.iterrows():
             try:
-                item = _convert_row_to_plan_item(row, detected_months, has_cumulative)
+                item = _convert_row_to_plan_item(
+                    row, detected_months, has_cumulative, mrp_columns,
+                )
                 if item:
                     plan_data.add_item(item.site, item.sku, item)
             except Exception as e:
-                logger.warning(f"⚠️ 解析計劃資料列失敗: {e}")
+                logger.warning(f"解析計劃資料列失敗: {e}")
                 continue
 
-        logger.info(f"✅ 載入完成: {len(plan_data.items)} 個品項計劃")
+        logger.info(f"載入完成: {len(plan_data.items)} 個品項計劃")
         return plan_data
 
+    except DataLoadError:
+        raise
     except Exception as e:
-        logger.error(f"❌ 載入庫存計劃失敗: {e}")
+        logger.error(f"載入庫存計劃失敗: {e}")
         raise DataLoadError(f"載入庫存計劃失敗: {e}") from e
 
 
+def _parse_mrp_columns(
+        columns: pd.Index | list[str],
+) -> dict[str, dict[str, str]]:
+    """
+    解析 SAP MRP 報表的複合欄位名（例如 M202604實際需求）。
+
+    不改動 _detect_month_columns()（銷貨資料用），這是獨立的 plan 專用解析器。
+
+    欄位格式：
+      - 一般月份：M{YYYYMM}{中文維度}，例如 M202604實際需求
+      - 累計前期：<=M{YYYYMM}{中文維度}，例如 <=M202603實際需求
+      - 累計後期：>=M{YYYYMM}{中文維度}，例如 >=M202607計劃訂單
+
+    回傳結構：
+      {
+          "202604": {
+              "demand": "M202604實際需求",
+              "supply": "M202604實際供給",
+              "available": "M202604可用數量",
+              ...
+          },
+          "202605": { ... },
+      }
+    """
+    # 維度關鍵字 → 英文 key 的對應
+    dimension_map: dict[str, str] = {
+        "實際需求": "demand",
+        "實際供給": "supply",
+        "可用數量": "available",
+        "計劃訂單": "planned_order",
+        "獨立需求": "independent_demand",
+        "調撥(出)": "transfer_out",
+        "調撥(入)": "transfer_in",
+    }
+
+    # regex: 匹配 [<=|>=]M{YYYYMM}{維度}
+    pattern = re.compile(r"^[<>]?=?M(\d{6})(.+)$")
+
+    result: dict[str, dict[str, str]] = {}
+    matched_count = 0
+
+    for col in columns:
+        col_str = str(col).strip()
+        m = pattern.match(col_str)
+        if not m:
+            continue
+
+        month_str = m.group(1)  # "202604"
+        dimension_zh = m.group(2)  # "實際需求"
+
+        # 驗證月份合理性
+        try:
+            year = int(month_str[:4])
+            month = int(month_str[4:6])
+            if not (1 <= month <= 12 and 2000 <= year <= 2100):
+                continue
+        except ValueError:
+            continue
+
+        # 對應維度
+        dimension_en = dimension_map.get(dimension_zh)
+        if not dimension_en:
+            continue
+
+        if month_str not in result:
+            result[month_str] = {}
+        result[month_str][dimension_en] = col_str
+        matched_count += 1
+
+    if matched_count > 0:
+        logger.debug(f"MRP 欄位解析: {matched_count} 個欄位, {len(result)} 個月份")
+
+    return result
+
+
 def _detect_month_columns(columns: pd.Index | list[str]) -> list[str]:
-    """偵測月份欄位（YYYYMM 格式）"""
+    """偵測月份欄位（YYYYMM 格式）-- 銷貨資料用，不改動"""
     month_pattern = re.compile(r"(\d{6})")  # YYYYMM
     months: set[str] = set()
 
@@ -582,8 +730,9 @@ def _convert_row_to_plan_item(
         row: pd.Series,
         detected_months: list[str],
         has_cumulative: bool,
+        mrp_columns: dict[str, dict[str, str]] | None = None,
 ) -> PlanItemData | None:
-    """轉換 DataFrame 行為 PlanItemData"""
+    """轉換 DataFrame 行為 PlanItemData（支援 MRP 格式和舊格式）"""
     site = str(row.get("site", "")).strip()
     sku = str(row.get("sku", "")).strip()
 
@@ -602,7 +751,12 @@ def _convert_row_to_plan_item(
     )
 
     for month in detected_months:
-        month_data = _extract_month_data(row, month, has_cumulative)
+        if mrp_columns and month in mrp_columns:
+            # MRP 格式：從 mrp_columns 映射讀取
+            month_data = _extract_mrp_month_data(row, month, mrp_columns[month])
+        else:
+            # 舊格式：用原有的 pattern matching
+            month_data = _extract_month_data(row, month, has_cumulative)
         if month_data:
             item.months[month] = month_data
 
@@ -651,6 +805,51 @@ def _extract_month_data(
         transfer_in=values["transfer_in"],
         transfer_out=values["transfer_out"],
         independent_demand=values["independent_demand"],
+    )
+
+
+def _extract_mrp_month_data(
+        row: pd.Series,
+        month: str,
+        col_map: dict[str, str],
+) -> MonthlyPlanData | None:
+    """從 MRP 格式的欄位提取單月資料。
+
+    Args:
+        row: DataFrame 行
+        month: YYYYMM 格式月份
+        col_map: 該月份的欄位映射，例如
+                 {"demand": "M202604實際需求", "supply": "M202604實際供給", ...}
+    """
+    def _safe_float(col_name: str | None) -> float:
+        if not col_name or col_name not in row.index:
+            return 0.0
+        try:
+            val = float(row[col_name])
+            return val if not pd.isna(val) else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+
+    demand = _safe_float(col_map.get("demand"))
+    supply = _safe_float(col_map.get("supply"))
+    transfer_in = _safe_float(col_map.get("transfer_in"))
+    transfer_out = _safe_float(col_map.get("transfer_out"))
+    independent_demand = _safe_float(col_map.get("independent_demand"))
+
+    # SAP MRP 的需求值通常是負數（代表消耗），取絕對值
+    if demand < 0:
+        demand = abs(demand)
+
+    if all(v == 0 for v in [demand, supply, transfer_in, transfer_out, independent_demand]):
+        return None
+
+    return MonthlyPlanData(
+        month=month,
+        demand=demand,
+        supply=supply,
+        transfer_in=transfer_in,
+        transfer_out=transfer_out,
+        independent_demand=independent_demand,
     )
 
 

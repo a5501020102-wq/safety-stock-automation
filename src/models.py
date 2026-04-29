@@ -237,6 +237,8 @@ class PlanData:
         items: 所有料號的計劃資料 (key: "site|||sku", value: PlanItemData)
         detected_months: 偵測到的月份列表 (已排序的 YYYYMM 列表)
         has_cumulative_columns: 是否包含累積欄位
+        planning_horizon: 計劃涵蓋範圍，例如 "202604-202606"
+        source_filename: 原始檔名（用於前端顯示）
 
     Methods:
         get_item: 根據 site 和 sku 取得計劃資料
@@ -254,6 +256,8 @@ class PlanData:
     items: dict[str, PlanItemData] = field(default_factory=dict)
     detected_months: list[str] = field(default_factory=list)
     has_cumulative_columns: bool = False
+    planning_horizon: str | None = None
+    source_filename: str | None = None
 
     def get_item(self, site: str, sku: str) -> PlanItemData | None:
         """
