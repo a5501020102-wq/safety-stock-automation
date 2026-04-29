@@ -15,19 +15,19 @@ Last Updated: 2024-12-19
 import json
 import logging
 import smtplib
-import urllib.request
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .calculator import CalculationSummary, StockStatus
+from .calculator import CalculationSummary
 from .config_loader import config
 
 # Import ChangeValidationResult only if needed (avoid circular import)
@@ -234,7 +234,7 @@ class EmailNotifier:
     def _format_text_body(self, payload: NotificationPayload) -> str:
         """Format plain text email body."""
         lines = [
-            f"SS Automation 通知",
+            "SS Automation 通知",
             "=" * 40,
             "",
             payload.summary,

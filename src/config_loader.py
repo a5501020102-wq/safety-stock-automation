@@ -62,10 +62,10 @@ class Config:
             raise ConfigurationError(f"Configuration file not found: {config_path}")
 
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 self._config = yaml.safe_load(f) or {}
         except yaml.YAMLError as e:
-            raise ConfigurationError(f"Invalid YAML in config file: {e}")
+            raise ConfigurationError(f"Invalid YAML in config file: {e}") from e
 
         # Apply environment variable overrides
         self._apply_env_overrides()

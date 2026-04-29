@@ -12,7 +12,6 @@ Last Updated: 2024-12-19
 
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -288,6 +287,11 @@ def _result_to_dict(result: CalculationResult) -> dict:
         'outliers_removed': result.outliers_removed,
         'has_insufficient_samples': result.has_insufficient_samples,
         'has_plan': result.has_plan,
+        'plan_stock': result.plan_stock if result.has_plan else None,
+        'final_stock': result.final_stock if result.has_plan else None,
+        'min_stock': result.min_stock if result.has_plan else None,
+        'min_stock_month': result.min_stock_month if result.has_plan else None,
+        'gap': result.gap if result.has_plan else None,
         'suggested_order': result.suggested_order if result.has_plan else None,
         'first_shortage_month': result.first_shortage_month,
         'order_deadline': result.order_deadline,

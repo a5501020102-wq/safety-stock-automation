@@ -27,24 +27,45 @@ Key Features:
 5. abc_thresholds = {A: 0.80, B: 0.95} (可自訂)
 """
 
+import calendar
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
+from enum import Enum
 from typing import Any
 
 import pandas as pd
+from dateutil.relativedelta import relativedelta
 
 from .config_loader import config
 from .models import (
+    KEY_DELIMITER,
+    ABCClass,
     PlanData,
-    PlanItemData,
     SalesData,
     StockStatus,
-    ABCClass,
-    KEY_DELIMITER,
 )
 from .utils import calculate_order_deadline, create_composite_key
+
+# ============================================================================
+# Granularity Enum
+# ============================================================================
+
+class Granularity(str, Enum):
+    """Aggregation granularity for demand analysis."""
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+    @property
+    def days_per_period(self) -> int:
+        if self == Granularity.DAILY:
+            return 1
+        elif self == Granularity.WEEKLY:
+            return 7
+        else:
+            return 30
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -143,6 +164,13 @@ class CalculationResult:
     order_deadline: str | None = None
     monthly_plan: list[MonthlyPlanResult] = field(default_factory=list)
 
+    # Trend detection
+    trend_pct: float | None = None
+    trend_label: str = "—"  # "+X%", "-X%", "New", "Discontinued", "—"
+
+    # ABC metadata
+    is_price_missing: bool = False
+
     # Raw data for debugging
     monthly_values: list[float] = field(default_factory=list)
     price: float = 0.0
@@ -191,8 +219,9 @@ class CalculationOptions:
     """Parameters for a calculation run."""
     # Time parameters
     lead_time_days: int = 30
-    days_per_month: int = 30
+    days_per_period: int = 30
     min_months: int = 2
+    granularity: Granularity = Granularity.MONTHLY
 
     # Classification parameters
     abc_thresholds: dict[str, float] = field(default_factory=lambda: {"A": 0.80, "B": 0.95})
@@ -219,10 +248,21 @@ class CalculationOptions:
     ma_fill_value: float = 0.0
 
     # ✅ v4.2.1: 新增訂購量參數（用於計算 max_inventory）
-    default_order_quantity: int = 0  # 默認訂購量（如果 = 0，則使用 safety_stock）
+    default_order_quantity: int = 0
 
     # v4.4.0: 資料最大日期（用於排除未完成月份）
     max_date: datetime | None = None
+
+    # v5.1.0: Category-based lead time overrides
+    category_lead_times: dict[str, int] = field(default_factory=dict)
+    group_lead_times: dict[str, int] = field(default_factory=dict)
+
+    # v5.1.0: Date range filter
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+
+    # Trend detection
+    trend_mode: str = "none"  # "short" / "yoy" / "none"
 
 
 @dataclass
@@ -231,8 +271,9 @@ class CalculationRequest:
     sales_data: SalesData
     price_data: dict[str, float] | None = None
     plan_data: PlanData | None = None
-    calc_mode: str = "all"  # 'all', 'total', or 'single'
+    calc_mode: str = "all"
     target_site: str | None = None
+    material_master: dict[str, Any] | None = None
     options: CalculationOptions = field(default_factory=CalculationOptions)
 
 
@@ -253,8 +294,9 @@ class SafetyStockCalculator:
         # Load default parameters from config
         self._default_options = CalculationOptions(
             lead_time_days=calc_config.get("lead_time_days", 30),
-            days_per_month=calc_config.get("days_per_month", 30),
+            days_per_period=Granularity.MONTHLY.days_per_period,
             min_months=calc_config.get("min_months", 2),
+            granularity=Granularity.MONTHLY,
             abc_thresholds=calc_config.get("abc_thresholds", {"A": 0.80, "B": 0.95}).copy(),
             z_scores=calc_config.get("z_scores", {"A": 2.05, "B": 1.65, "C": 1.28}).copy(),
             overstock_multiplier=stock_health_config.get(
@@ -290,6 +332,14 @@ class SafetyStockCalculator:
             enable_moving_average: bool | None = None,
             ma_window: int | None = None,
             max_date: datetime | None = None,
+            granularity: str | Granularity | None = None,
+            category_lead_times: dict[str, int] | None = None,
+            group_lead_times: dict[str, int] | None = None,
+            material_master: dict[str, Any] | None = None,
+            date_from: datetime | None = None,
+            date_to: datetime | None = None,
+            trend_mode: str = "none",
+            working_days_per_month: int | None = None,
     ) -> tuple[list[CalculationResult], list[ExcludedItem], CalculationSummary]:
         """
         Execute the complete safety stock calculation.
@@ -332,10 +382,17 @@ class SafetyStockCalculator:
             enable_moving_average=enable_moving_average,
             ma_window=ma_window,
             max_date=resolved_max_date,
+            granularity=granularity,
+            category_lead_times=category_lead_times,
+            group_lead_times=group_lead_times,
+            date_from=date_from,
+            date_to=date_to,
+            trend_mode=trend_mode,
+            working_days_per_month=working_days_per_month,
         )
 
         # ✅ v4.3.4: 日誌輸出參數資訊
-        logger.info(f"📊 計算參數：")
+        logger.info("📊 計算參數：")
         logger.info(f"   服務水準: A={options.z_scores['A']:.2f}, "
                     f"B={options.z_scores['B']:.2f}, "
                     f"C={options.z_scores['C']:.2f}")
@@ -352,6 +409,7 @@ class SafetyStockCalculator:
             calc_mode=calc_mode,
             target_site=target_site,
             options=options,
+            material_master=material_master,
         )
 
         # Execute calculation pipeline
@@ -374,17 +432,29 @@ class SafetyStockCalculator:
             enable_moving_average: bool | None = None,
             ma_window: int | None = None,
             max_date: datetime | None = None,
+            granularity: str | Granularity | None = None,
+            category_lead_times: dict[str, int] | None = None,
+            group_lead_times: dict[str, int] | None = None,
+            date_from: datetime | None = None,
+            date_to: datetime | None = None,
+            trend_mode: str = "none",
+            working_days_per_month: int | None = None,
     ) -> CalculationOptions:
-        """
-        Create calculation options with overrides applied to defaults.
+        """Create calculation options with overrides applied to defaults."""
+        # Resolve granularity
+        resolved_granularity = self._default_options.granularity
+        if granularity is not None:
+            if isinstance(granularity, str):
+                resolved_granularity = Granularity(granularity)
+            else:
+                resolved_granularity = granularity
 
-        ✅ v4.3.4: 新增 abc_thresholds 參數處理
-        """
         # Start with defaults
         options = CalculationOptions(
             lead_time_days=self._default_options.lead_time_days,
-            days_per_month=self._default_options.days_per_month,
+            days_per_period=resolved_granularity.days_per_period,
             min_months=self._default_options.min_months,
+            granularity=resolved_granularity,
             abc_thresholds=self._default_options.abc_thresholds.copy(),
             z_scores=self._default_options.z_scores.copy(),
             overstock_multiplier=self._default_options.overstock_multiplier,
@@ -440,6 +510,22 @@ class SafetyStockCalculator:
             options.max_date = max_date
             logger.debug(f"覆寫 max_date: {max_date}")
 
+        if category_lead_times:
+            options.category_lead_times = {str(k): int(v) for k, v in category_lead_times.items()}
+        if group_lead_times:
+            options.group_lead_times = {str(k): int(v) for k, v in group_lead_times.items()}
+
+        if date_from is not None:
+            options.date_from = date_from
+        if date_to is not None:
+            options.date_to = date_to
+
+        if trend_mode in ("short", "yoy", "none"):
+            options.trend_mode = trend_mode
+
+        if working_days_per_month is not None and options.granularity == Granularity.MONTHLY:
+            options.days_per_period = working_days_per_month
+
         return options
 
     def _execute_calculation(
@@ -456,10 +542,11 @@ class SafetyStockCalculator:
         aggregated = self._aggregate_data(request)
         logger.info(f"  ✓ 彙總了 {len(aggregated)} 個 SKU")
 
-        # Step 3: Calculate statistics (v4.2.0: 包含移動平均)
+        # Step 3: Calculate statistics
         logger.info("步驟 3: 計算統計數據")
+        logger.info(f"  粒度: {request.options.granularity.value}")
         if request.options.enable_moving_average:
-            logger.info(f"  ✓ 啟用 {request.options.ma_window} 個月移動平均")
+            logger.info(f"  ✓ 啟用 {request.options.ma_window} 期移動平均")
         items_with_stats = self._calculate_statistics(aggregated, request.options)
         logger.info(f"  ✓ 計算了 {len(items_with_stats)} 個品項的統計")
 
@@ -469,7 +556,9 @@ class SafetyStockCalculator:
 
         # Step 5: Calculate Safety Stock
         logger.info("步驟 5: 計算安全庫存")
-        results, excluded = self._calculate_safety_stock(items_with_stats, request.options)
+        results, excluded = self._calculate_safety_stock(
+            items_with_stats, request.options, request.material_master
+        )
         logger.info(f"  ✓ 計算成功: {len(results)} 個")
         logger.info(f"  ✓ 排除項目: {len(excluded)} 個")
 
@@ -520,10 +609,9 @@ class SafetyStockCalculator:
             for idx in df.index[invalid_qty_mask][:10]:
                 errors.append(f"第 {idx} 列: 數量格式無效 ({df.at[idx, 'quantity']})")
 
-        negative_qty_mask = qty_numeric.fillna(0) < 0
-        if negative_qty_mask.any():
-            for idx in df.index[negative_qty_mask][:10]:
-                errors.append(f"第 {idx} 列: 數量為負數 ({df.at[idx, 'quantity']})")
+        negative_qty_count = int((qty_numeric.fillna(0) < 0).sum())
+        if negative_qty_count > 0:
+            logger.info(f"  ℹ 偵測到 {negative_qty_count} 筆負數量（退貨），將在聚合時自動沖抵")
 
         ym_series = df["year_month"]
         empty_ym_mask = ym_series.isna()
@@ -545,12 +633,23 @@ class SafetyStockCalculator:
 
         logger.info(f"  ✓ 驗證通過: {len(df)} 筆記錄")
 
+    @staticmethod
+    def _get_period_key(row: pd.Series, granularity: Granularity) -> str | None:
+        """Return the appropriate time-period key based on granularity."""
+        if granularity == Granularity.DAILY:
+            return row.get("date_str") or None
+        elif granularity == Granularity.WEEKLY:
+            return row.get("year_week") or None
+        else:
+            return row.get("year_month") or None
+
     def _aggregate_data(self, request: CalculationRequest) -> dict[str, dict[str, Any]]:
-        """Aggregate sales data by site+SKU, building monthly timelines."""
+        """Aggregate sales data by site+SKU, building period timelines."""
         df = request.sales_data.df
         price_map = request.price_data or {}
         calc_mode = request.calc_mode
         target_site = request.target_site
+        granularity = request.options.granularity
 
         aggregated_data: dict[str, dict[str, Any]] = {}
         skipped_rows = 0
@@ -565,13 +664,11 @@ class SafetyStockCalculator:
             sku = str(row.get("sku", "")).strip()
             if not sku:
                 skipped_rows += 1
-                logger.debug(f"跳過無 SKU 的資料列")
                 continue
 
-            year_month = row.get("year_month")
-            if not year_month:
+            period_key = self._get_period_key(row, granularity)
+            if not period_key:
                 skipped_rows += 1
-                logger.debug(f"跳過無 year_month 的資料列: SKU={sku}")
                 continue
 
             qty = float(row.get("quantity", 0))
@@ -584,10 +681,20 @@ class SafetyStockCalculator:
                 )
 
             timeline = aggregated_data[composite_key]["timeline"]
-            timeline[year_month] = timeline.get(year_month, 0.0) + qty
+            timeline[period_key] = timeline.get(period_key, 0.0) + qty
 
         if skipped_rows > 0:
             logger.info(f"  ℹ 跳過 {skipped_rows} 筆無效資料")
+
+        for _comp_key, item in aggregated_data.items():
+            tl = item["timeline"]
+            for period_key in list(tl.keys()):
+                if tl[period_key] < 0:
+                    logger.warning(
+                        f"SKU {item.get('sku','')} @ {item.get('site','')} "
+                        f"期間 {period_key} 淨需求為負 ({tl[period_key]:.1f})，歸零處理"
+                    )
+                    tl[period_key] = 0.0
 
         return aggregated_data
 
@@ -640,88 +747,161 @@ class SafetyStockCalculator:
     # v4.2.0: 移動平均相關方法
     # ========================================================================
 
-    def _fill_missing_months(
+    # ========================================================================
+    # Period fill helpers (daily / weekly / monthly)
+    # ========================================================================
+
+    @staticmethod
+    def _parse_period_key(key: str, granularity: Granularity) -> datetime | None:
+        """Parse a period key string back to a datetime."""
+        try:
+            if granularity == Granularity.DAILY:
+                return datetime.strptime(key, "%Y-%m-%d")
+            elif granularity == Granularity.WEEKLY:
+                return datetime.strptime(key + "-1", "%G-W%V-%u")
+            else:
+                return datetime.strptime(key, "%Y-%m")
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _format_period_key(dt: datetime, granularity: Granularity) -> str:
+        """Format a datetime into a period key string."""
+        if granularity == Granularity.DAILY:
+            return dt.strftime("%Y-%m-%d")
+        elif granularity == Granularity.WEEKLY:
+            iso = dt.isocalendar()
+            return f"{iso[0]}-W{iso[1]:02d}"
+        else:
+            return f"{dt.year}-{dt.month:02d}"
+
+    @staticmethod
+    def _period_step(granularity: Granularity):
+        """Return the time increment for one period."""
+        if granularity == Granularity.DAILY:
+            return timedelta(days=1)
+        elif granularity == Granularity.WEEKLY:
+            return timedelta(weeks=1)
+        else:
+            return None  # monthly uses relativedelta
+
+    @staticmethod
+    def _month_of_period(dt: datetime, granularity: Granularity) -> int:
+        """Determine which month a period belongs to (for selected_months filter).
+        For weekly: use ISO convention — the month of Thursday decides."""
+        if granularity == Granularity.WEEKLY:
+            thursday = dt + timedelta(days=(3 - dt.weekday()))
+            return thursday.month
+        return dt.month
+
+    def _is_period_complete(
+            self, dt: datetime, granularity: Granularity, max_date: datetime
+    ) -> bool:
+        """Check if a period is complete based on max_date."""
+        if granularity == Granularity.DAILY:
+            return True
+        elif granularity == Granularity.WEEKLY:
+            week_sunday = dt + timedelta(days=(6 - dt.weekday()))
+            return max_date >= week_sunday
+        else:
+            last_day = calendar.monthrange(dt.year, dt.month)[1]
+            month_end = dt.replace(day=last_day)
+            if max_date.year == dt.year and max_date.month == dt.month:
+                return max_date.day >= last_day
+            return max_date > month_end
+
+    def _fill_missing_periods(
             self,
             timeline: dict[str, float],
+            granularity: Granularity,
             selected_months: list[int],
             fill_value: float = 0.0,
             max_date: datetime | None = None,
-    ) -> tuple[list[float], int, int]:
+            date_from: datetime | None = None,
+            date_to: datetime | None = None,
+    ) -> tuple[list[float], int, int, list[str]]:
         """
-        填補缺失月份並返回完整的月度數據列表 (v4.4.0)
+        Fill missing periods and return a complete time series.
 
-        v4.4.0 改進：
-        - 排除未完成的最後一個月（根據 max_date 判斷）
-        - 無論是否啟用移動平均都會被呼叫
-        - 回傳值新增 total_months（完整月份數）
+        Supports daily, weekly, and monthly granularity.
+        Excludes incomplete trailing periods based on max_date.
 
         Returns:
-            (filled_values, missing_count, total_months)
+            (filled_values, missing_count, total_periods, period_keys)
         """
         if not timeline:
-            return [], 0, 0
+            return [], 0, 0, []
 
-        try:
-            from dateutil.relativedelta import relativedelta
-        except ImportError:
-            logger.error("需要安裝 python-dateutil: pip install python-dateutil")
-            sorted_values = [timeline[k] for k in sorted(timeline.keys())]
-            return sorted_values, 0, len(timeline)
+        sorted_keys = sorted(timeline.keys())
+        start_dt = self._parse_period_key(sorted_keys[0], granularity)
+        end_dt = self._parse_period_key(sorted_keys[-1], granularity)
 
-        year_months = sorted(timeline.keys())
-        start_ym = year_months[0]
-        end_ym = year_months[-1]
+        if start_dt is None or end_dt is None:
+            logger.error(f"Period key parse failed: {sorted_keys[0]} / {sorted_keys[-1]}")
+            vals = [timeline[k] for k in sorted_keys]
+            return vals, 0, len(vals), sorted_keys
 
-        try:
-            start_date = datetime.strptime(start_ym, '%Y-%m')
-            end_date = datetime.strptime(end_ym, '%Y-%m')
-        except ValueError as e:
-            logger.error(f"日期格式錯誤: {e}, 跳過填補")
-            return list(timeline.values()), 0, len(timeline)
+        # Apply user-specified date range override
+        if date_from is not None and date_from > start_dt:
+            start_dt = date_from
+        if date_to is not None and date_to < end_dt:
+            end_dt = date_to
 
-        # v4.4.0: 排除未完成的最後一個月
-        # 判斷邏輯：如果 max_date 不是該月的最後一天，則該月視為未完成
+        # Exclude incomplete trailing period
         if max_date is not None:
-            import calendar
-            last_day_of_max_month = calendar.monthrange(max_date.year, max_date.month)[1]
-            max_month_is_complete = (max_date.day >= last_day_of_max_month)
+            end_key = sorted_keys[-1]
+            end_period_dt = end_dt
+            if not self._is_period_complete(end_period_dt, granularity, max_date):
+                logger.info(
+                    f"排除未完成期間: {end_key} "
+                    f"(max_date={max_date.strftime('%Y-%m-%d')})"
+                )
+                if granularity == Granularity.MONTHLY:
+                    end_dt = end_dt - relativedelta(months=1)
+                elif granularity == Granularity.WEEKLY:
+                    end_dt = end_dt - timedelta(weeks=1)
+                else:
+                    end_dt = end_dt - timedelta(days=1)
 
-            if not max_month_is_complete:
-                incomplete_ym = f"{max_date.year}-{max_date.month:02d}"
-                # 把 end_date 退到上一個月
-                if end_ym == incomplete_ym:
-                    end_date = end_date - relativedelta(months=1)
-                    logger.info(
-                        f"📅 排除未完成月份: {incomplete_ym} "
-                        f"(max_date={max_date.strftime('%Y-%m-%d')}, "
-                        f"月末={last_day_of_max_month}日)"
-                    )
+            # Also exclude incomplete leading period (weekly/daily)
+            if granularity == Granularity.WEEKLY:
+                start_weekday = start_dt.weekday()
+                if start_weekday != 0:
+                    start_dt = start_dt + timedelta(days=(7 - start_weekday))
+                    logger.info(f"排除不完整首周，起始調整至: {start_dt.strftime('%Y-%m-%d')}")
 
-        # 如果排除後 end < start，說明只有一個未完成月份的資料
-        if end_date < start_date:
-            logger.warning("⚠️ 排除未完成月份後無完整月份資料")
-            return [], 0, 0
+        if end_dt < start_dt:
+            logger.warning("排除不完整期間後無有效資料")
+            return [], 0, 0, []
 
-        all_months = []
-        current = start_date
-        while current <= end_date:
-            if current.month in selected_months:
-                ym_str = f"{current.year}-{current.month:02d}"
-                all_months.append(ym_str)
-            current += relativedelta(months=1)
+        # Generate all period keys in range
+        all_keys: list[str] = []
+        current = start_dt
+        step = self._period_step(granularity)
 
-        filled_values = []
+        while current <= end_dt:
+            month_of = self._month_of_period(current, granularity)
+            if month_of in selected_months:
+                key = self._format_period_key(current, granularity)
+                all_keys.append(key)
+
+            if step is not None:
+                current = current + step
+            else:
+                current = current + relativedelta(months=1)
+
+        # Fill values
+        filled_values: list[float] = []
         missing_count = 0
 
-        for ym in all_months:
-            if ym in timeline:
-                filled_values.append(timeline[ym])
+        for key in all_keys:
+            if key in timeline:
+                filled_values.append(timeline[key])
             else:
                 filled_values.append(fill_value)
                 missing_count += 1
 
-        total_months = len(all_months)
-        return filled_values, missing_count, total_months
+        return filled_values, missing_count, len(all_keys), all_keys
 
     def _apply_moving_average(
             self,
@@ -790,82 +970,269 @@ class SafetyStockCalculator:
         """
         Calculate demand statistics for each item.
 
-        v4.4.0 改進：
-        - 始終呼叫 _fill_missing_months() 填補零出貨月份
-        - 排除未完成的最後一個月（透過 options.max_date）
-        - 新增 total_months 欄位（完整月份數，含補零）
+        v5.1.0:
+        - Multi-granularity support (daily/weekly/monthly)
+        - MAD outlier detection BEFORE moving average (correct order)
+        - selectedMonths consistency for total_qty
         """
         items = []
+        granularity = options.granularity
 
-        for key, item in aggregated.items():
-            # v4.4.0: 始終填補缺失月份（含排除未完成月）
-            filled_values, missing_count, total_months = self._fill_missing_months(
+        for _key, item in aggregated.items():
+            filled_values, missing_count, total_periods, period_keys = self._fill_missing_periods(
                 item["timeline"],
+                granularity,
                 options.selected_months,
                 fill_value=0.0,
                 max_date=options.max_date,
+                date_from=options.date_from,
+                date_to=options.date_to,
             )
 
             if missing_count > 0:
                 logger.debug(
-                    f"{item['sku']}: 填補了 {missing_count} 個缺失月份 "
-                    f"(完整月數={total_months})"
+                    f"{item['sku']}: 填補了 {missing_count} 個缺失期間 "
+                    f"(完整期數={total_periods}, 粒度={granularity.value})"
                 )
 
-            monthly_values = filled_values
-            # total_qty 使用原始 timeline 全部銷量（含未完成月），確保 ABC 分類正確
-            total_qty = sum(item["timeline"].values())
+            period_values = filled_values
 
-            # 移動平均（如果啟用）
-            if options.enable_moving_average and len(monthly_values) > 0:
+            # total_qty: only sum periods within selected range (consistency fix)
+            selected_keys = set(period_keys)
+            total_qty = sum(
+                v for k, v in item["timeline"].items() if k in selected_keys
+            )
+
+            active_periods = sum(1 for v in period_values if v > 0)
+
+            # Step 1: MAD outlier detection on RAW period values (before MA)
+            # Uses non-zero values for median/MAD, applies bounds to full series
+            stats_raw = self._calculate_mad_statistics(period_values, options)
+            outliers = stats_raw.outliers
+            outliers_removed = 0
+
+            # Step 2: Method B — replace outlier positions with 0, keep sequence length
+            outlier_indices = {o.index for o in outliers}
+            if outlier_indices:
+                non_outlier_count = len(period_values) - len(outlier_indices)
+                if non_outlier_count >= options.min_sample_size:
+                    cleaned_values = [
+                        0.0 if i in outlier_indices else v
+                        for i, v in enumerate(period_values)
+                    ]
+                    outliers_removed = len(outlier_indices)
+                    logger.debug(
+                        f"{item['sku']}: {outliers_removed} 個離群值填回零 "
+                        f"(序列長度保持 {len(cleaned_values)})"
+                    )
+                else:
+                    cleaned_values = list(period_values)
+            else:
+                cleaned_values = list(period_values)
+
+            # Step 3: Moving average on cleaned values (after outlier replacement)
+            if options.enable_moving_average and len(cleaned_values) > 0:
                 smoothed_values = self._apply_moving_average(
-                    monthly_values,
+                    cleaned_values,
                     window=options.ma_window,
-                    min_periods=options.ma_min_periods
-                )
-
-                logger.debug(
-                    f"{item['sku']}: 移動平均 "
-                    f"(原始={len(monthly_values)}月, window={options.ma_window})"
+                    min_periods=options.ma_min_periods,
                 )
             else:
-                smoothed_values = monthly_values
+                smoothed_values = cleaned_values
 
-            active_months = sum(1 for v in monthly_values if v > 0)
-            stats = self._calculate_mad_statistics(smoothed_values, options)
+            # Step 4: Final mean/std from the processed series
+            final_n = len(smoothed_values)
+            if final_n == 0:
+                mean_val = 0.0
+                std_val = 0.0
+            elif final_n == 1:
+                mean_val = smoothed_values[0]
+                std_val = 0.0
+            else:
+                mean_val = sum(smoothed_values) / final_n
+                variance = sum((v - mean_val) ** 2 for v in smoothed_values) / (final_n - 1)
+                std_val = math.sqrt(variance)
+
+            # Trend detection
+            trend_pct, trend_label = self._calculate_trend(
+                period_values, options.trend_mode, options.selected_months, period_keys,
+            )
 
             items.append({
                 **item,
-                "monthly_values": monthly_values,
-                "smoothed_values": smoothed_values if options.enable_moving_average else monthly_values,
-                "active_months": active_months,
-                "total_months": total_months,
+                "monthly_values": period_values,
+                "smoothed_values": smoothed_values,
+                "active_months": active_periods,
+                "total_months": total_periods,
                 "total_qty": total_qty,
                 "total_value": total_qty * item["price"],
-                "mean": stats.mean,
-                "std_dev": stats.std_dev,
-                "outliers": stats.outliers,
-                "outliers_removed": stats.outliers_removed,
-                "has_insufficient_samples": stats.final_sample_size < options.min_confidence_samples,
+                "mean": mean_val,
+                "std_dev": std_val,
+                "outliers": outliers,
+                "outliers_removed": outliers_removed,
+                "has_insufficient_samples": final_n < options.min_confidence_samples,
+                "trend_pct": trend_pct,
+                "trend_label": trend_label,
             })
 
         return items
+
+    @staticmethod
+    def _compute_median(sorted_vals: list[float]) -> float:
+        """Compute median from a pre-sorted list."""
+        n = len(sorted_vals)
+        mid = n // 2
+        if n % 2 == 0:
+            return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2
+        return sorted_vals[mid]
+
+    @staticmethod
+    def _calculate_trend(
+            values: list[float],
+            mode: str,
+            selected_months: list[int],
+            period_keys: list[str],
+    ) -> tuple[float | None, str]:
+        """
+        Calculate trend percentage.
+
+        Returns (trend_pct, trend_label):
+          trend_pct: float percentage or None
+          trend_label: "+X%", "-X%", "New", "Discontinued", "—"
+
+        Priority:
+          1. all zero → "—"
+          2. < 4 periods → "—"
+          3. non-contiguous selectedMonths (short mode) → "—"
+          4. first_half=0, second_half>0 → "New"
+          5. first_half>0, second_half=0 → "Discontinued"
+          6. normal → "+X%" / "-X%"
+        """
+        if mode == "none" or not values:
+            return None, "—"
+
+        if mode == "yoy":
+            return SafetyStockCalculator._calculate_trend_yoy(values, period_keys)
+
+        # --- Short-term trend ---
+
+        # Rule 1: all zero
+        if all(v == 0 for v in values):
+            return None, "—"
+
+        # Rule 2: < 4 periods
+        if len(values) < 4:
+            return None, "—"
+
+        # Rule 3: non-contiguous selectedMonths
+        if selected_months and len(selected_months) > 1:
+            sorted_sm = sorted(selected_months)
+            for i in range(1, len(sorted_sm)):
+                if sorted_sm[i] - sorted_sm[i - 1] > 1:
+                    # Exception: 11,12,1,2 is contiguous (wraps around year)
+                    if not (sorted_sm[-1] == 12 and sorted_sm[0] == 1):
+                        return None, "—"
+
+        # Split into halves (odd length: drop middle)
+        n = len(values)
+        mid = n // 2
+        first_half = values[:mid]
+        second_half = values[mid + 1:] if n % 2 != 0 else values[mid:]
+
+        first_avg = sum(first_half) / len(first_half) if first_half else 0
+        second_avg = sum(second_half) / len(second_half) if second_half else 0
+
+        # Rule 4: New (first=0, second>0)
+        if first_avg == 0 and second_avg > 0:
+            return None, "New"
+
+        # Rule 5: Discontinued (first>0, second=0)
+        if first_avg > 0 and second_avg == 0:
+            return None, "Discontinued"
+
+        # Rule 6: normal calculation
+        if first_avg == 0:
+            return None, "—"
+
+        pct = ((second_avg - first_avg) / first_avg) * 100
+        label = f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%"
+        return round(pct, 1), label
+
+    @staticmethod
+    def _calculate_trend_yoy(
+            values: list[float],
+            period_keys: list[str],
+    ) -> tuple[float | None, str]:
+        """
+        YoY: compare latest two years using only months that exist in both.
+        """
+        if not period_keys or len(period_keys) < 2:
+            return None, "—"
+
+        # Group values by year
+        year_data: dict[int, dict[int, float]] = {}
+        for key, val in zip(period_keys, values, strict=True):
+            try:
+                parts = key.split("-")
+                year = int(parts[0])
+                month = int(parts[1])
+            except (ValueError, IndexError):
+                continue
+            if year not in year_data:
+                year_data[year] = {}
+            year_data[year][month] = year_data[year].get(month, 0) + val
+
+        years = sorted(year_data.keys())
+        if len(years) < 2:
+            return None, "—"
+
+        # Latest two years
+        this_year = years[-1]
+        last_year = years[-2]
+
+        # Intersection of months
+        common_months = set(year_data[this_year].keys()) & set(year_data[last_year].keys())
+        if not common_months:
+            return None, "—"
+
+        last_avg = sum(year_data[last_year][m] for m in common_months) / len(common_months)
+        this_avg = sum(year_data[this_year][m] for m in common_months) / len(common_months)
+
+        if last_avg == 0 and this_avg > 0:
+            return None, "New"
+        if last_avg > 0 and this_avg == 0:
+            return None, "Discontinued"
+        if last_avg == 0:
+            return None, "—"
+
+        pct = ((this_avg - last_avg) / last_avg) * 100
+        label = f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%"
+        return round(pct, 1), label
 
     def _calculate_mad_statistics(
             self,
             values: list[float],
             options: CalculationOptions | None = None,
     ) -> StatisticsResult:
-        """Calculate mean and standard deviation with MAD-based outlier detection."""
+        """
+        MAD-based outlier detection with zero-value exclusion (v5.1.0).
+
+        Key design:
+        - Median and MAD are computed from NON-ZERO values only,
+          so zero-demand periods don't dilute the center estimate.
+        - Outlier bounds are then applied to the FULL series,
+          but zero values are never flagged as outliers (they are
+          business-normal idle periods, not anomalies).
+        - If non-zero count < 3 or MAD = 0, no outlier detection
+          is performed.
+        """
         if options is None:
             mad_constant = MAD_TO_SIGMA_CONSTANT
             mad_multiplier = 3
-            min_sample_size = 2
             outlier_enabled = True
         else:
             mad_constant = options.mad_constant
             mad_multiplier = options.mad_multiplier
-            min_sample_size = options.min_sample_size
             outlier_enabled = options.enable_outlier_detection
 
         if not values:
@@ -880,73 +1247,59 @@ class SafetyStockCalculator:
                 outliers_removed=0, final_sample_size=1
             )
 
-        n = len(values)
-        sorted_values = sorted(values)
+        # Extract non-zero values for MAD calculation
+        non_zero = [v for v in values if v > 0]
 
-        mid = n // 2
-        median = (
-            (sorted_values[mid - 1] + sorted_values[mid]) / 2
-            if n % 2 == 0
-            else sorted_values[mid]
+        # Not enough non-zero data or detection disabled → skip
+        skip_detection = (
+            not outlier_enabled
+            or len(non_zero) < 3
         )
-
-        absolute_deviations = [abs(v - median) for v in values]
-        sorted_deviations = sorted(absolute_deviations)
-        mad = (
-            (sorted_deviations[mid - 1] + sorted_deviations[mid]) / 2
-            if n % 2 == 0
-            else sorted_deviations[mid]
-        )
-
-        sigma_equivalent = mad * mad_constant
-
-        lower_bound = median - mad_multiplier * sigma_equivalent
-        upper_bound = median + mad_multiplier * sigma_equivalent
 
         outliers: list[OutlierInfo] = []
-        clean_values: list[float] = []
 
-        for idx, v in enumerate(values):
-            if sigma_equivalent > 0 and (v < lower_bound or v > upper_bound):
-                outliers.append(OutlierInfo(
-                    index=idx,
-                    value=v,
-                    bound="upper" if v > upper_bound else "lower",
-                    threshold=upper_bound if v > upper_bound else lower_bound,
-                ))
-            else:
-                clean_values.append(v)
+        if not skip_detection:
+            sorted_nz = sorted(non_zero)
+            median_nz = self._compute_median(sorted_nz)
 
-        final_values: list[float]
-        outliers_removed = 0
+            abs_devs = sorted(abs(v - median_nz) for v in non_zero)
+            mad = self._compute_median(abs_devs)
 
-        if (
-                outlier_enabled
-                and outliers
-                and len(clean_values) >= min_sample_size
-        ):
-            final_values = clean_values
-            outliers_removed = len(outliers)
-            logger.debug(
-                f"移除 {outliers_removed} 個離群值，保留 {len(final_values)} 個樣本"
-            )
-        else:
-            final_values = values
+            # MAD = 0 means 50%+ of non-zero values are identical → skip
+            if mad > 0:
+                sigma_eq = mad * mad_constant
+                lower_bound = median_nz - mad_multiplier * sigma_eq
+                upper_bound = median_nz + mad_multiplier * sigma_eq
 
-        final_n = len(final_values)
-        mean = sum(final_values) / final_n
+                for idx, v in enumerate(values):
+                    if v <= 0:
+                        continue
+                    if v > upper_bound:
+                        outliers.append(OutlierInfo(
+                            index=idx, value=v,
+                            bound="upper", threshold=upper_bound,
+                        ))
+                    elif v < lower_bound:
+                        outliers.append(OutlierInfo(
+                            index=idx, value=v,
+                            bound="lower", threshold=lower_bound,
+                        ))
 
+        # Mean and std are computed on the full series (caller decides
+        # whether to remove outliers or replace them with zeros).
+        n = len(values)
+        mean = sum(values) / n
         std_dev = 0.0
-        if final_n > 1:
-            variance = sum((v - mean) ** 2 for v in final_values) / (final_n - 1)
+        if n > 1:
+            variance = sum((v - mean) ** 2 for v in values) / (n - 1)
             std_dev = math.sqrt(variance)
 
         return StatisticsResult(
             mean=mean,
             std_dev=std_dev,
             outliers=outliers,
-            outliers_removed=outliers_removed,
-            final_sample_size=final_n,
+            outliers_removed=len(outliers),
+            final_sample_size=n,
         )
 
     def _perform_abc_classification(
@@ -957,48 +1310,43 @@ class SafetyStockCalculator:
         """
         Perform ABC classification based on total value or quantity.
 
-        ✅ v4.3.4: 使用 options.abc_thresholds 進行分類
+        v5.1.0:
+        - Uses prev_cum_share to fix boundary classification
+        - No-price items are marked is_price_missing=True and classified as C
         """
         if not items:
             return
 
+        for item in items:
+            item.setdefault("is_price_missing", False)
+
         if len(items) == 1:
             items[0]["abc_class"] = ABCClass.A
-            logger.debug("單一品項，分類為 A")
+            items[0]["is_price_missing"] = items[0]["price"] <= 0
             return
 
-        use_value = any(item["price"] > 0 for item in items)
-        sort_key = "total_value" if use_value else "total_qty"
+        # Separate priced vs unpriced items
+        priced = [i for i in items if i["price"] > 0]
+        unpriced = [i for i in items if i["price"] <= 0]
 
-        logger.debug(f"ABC 分類使用: {'價值' if use_value else '數量'}")
+        # Mark unpriced items
+        for item in unpriced:
+            item["is_price_missing"] = True
 
-        items.sort(key=lambda x: x[sort_key], reverse=True)
-
-        total = sum(item[sort_key] for item in items)
-
-        if total == 0:
-            logger.warning("總價值/數量為 0，所有品項分類為 C")
-            for item in items:
-                item["abc_class"] = ABCClass.C
+        if not priced:
+            # All items lack price → classify entirely by quantity
+            self._abc_classify_list(items, "total_qty", options)
             return
 
-        cumulative = 0.0
-        # ✅ v4.3.4: 使用參數傳入的 abc_thresholds
-        threshold_a = options.abc_thresholds["A"]
-        threshold_b = options.abc_thresholds["B"]
+        # Priced items → classify by value
+        self._abc_classify_list(priced, "total_value", options)
 
-        logger.debug(f"ABC 分類門檻: A={threshold_a:.0%}, B={threshold_b:.0%}")
-
-        for item in items:
-            cumulative += item[sort_key]
-            percentage = cumulative / total
-
-            if percentage <= threshold_a:
-                item["abc_class"] = ABCClass.A
-            elif percentage <= threshold_b:
-                item["abc_class"] = ABCClass.B
-            else:
-                item["abc_class"] = ABCClass.C
+        # Unpriced items → classify independently by quantity (not stuck at C)
+        if unpriced:
+            self._abc_classify_list(unpriced, "total_qty", options)
+            logger.info(
+                f"ABC: {len(unpriced)} 品項無價格資料，按數量獨立分類 (is_price_missing)"
+            )
 
         class_counts = {
             ABCClass.A: sum(1 for i in items if i["abc_class"] == ABCClass.A),
@@ -1008,30 +1356,79 @@ class SafetyStockCalculator:
         logger.debug(f"ABC 分類結果: A={class_counts[ABCClass.A]}, "
                      f"B={class_counts[ABCClass.B]}, C={class_counts[ABCClass.C]}")
 
+    def _abc_classify_list(
+            self,
+            items: list[dict[str, Any]],
+            sort_key: str,
+            options: CalculationOptions,
+    ) -> None:
+        """Classify a list of items using prev_cum_share logic."""
+        items.sort(key=lambda x: x[sort_key], reverse=True)
+        total = sum(item[sort_key] for item in items)
+
+        if total == 0:
+            for item in items:
+                item["abc_class"] = ABCClass.C
+            return
+
+        threshold_a = options.abc_thresholds["A"]
+        threshold_b = options.abc_thresholds["B"]
+        prev_cum_share = 0.0
+
+        for item in items:
+            if prev_cum_share < threshold_a:
+                item["abc_class"] = ABCClass.A
+            elif prev_cum_share < threshold_b:
+                item["abc_class"] = ABCClass.B
+            else:
+                item["abc_class"] = ABCClass.C
+            prev_cum_share += item[sort_key] / total
+
+    @staticmethod
+    def _resolve_lead_time(
+            sku: str,
+            options: CalculationOptions,
+            material_master: dict[str, Any] | None,
+    ) -> int:
+        """Three-layer lead time lookup: group → category → default."""
+        if not material_master:
+            return options.lead_time_days
+
+        mapping = material_master.get("mapping", {})
+        group_id = mapping.get(sku)
+        if not group_id:
+            return options.lead_time_days
+
+        if group_id in options.group_lead_times:
+            return options.group_lead_times[group_id]
+
+        category_id = group_id.split("-")[0] if "-" in group_id else group_id
+        if category_id in options.category_lead_times:
+            return options.category_lead_times[category_id]
+
+        return options.lead_time_days
+
     def _calculate_safety_stock(
             self,
             items: list[dict[str, Any]],
             options: CalculationOptions,
+            material_master: dict[str, Any] | None = None,
     ) -> tuple[list[CalculationResult], list[ExcludedItem]]:
         """
         Calculate safety stock for each item.
 
-        ✅ v4.2.1: 添加 CV 和 reorder_point 計算
-        ✅ v4.3.4: 使用 options.z_scores 進行安全庫存計算
-
-        Formula:
-        - SS = Z × σ_monthly × √(LT/30)
-        - CV = σ / μ  (Coefficient of Variation)
-        - ROP = (μ / 30) × LT + SS  (Reorder Point)
-        - Max = ROP + Q  (Maximum Inventory)
+        v5.1.0:
+        - Per-SKU lead time via material master category mapping
+        - Multi-granularity: SS = Z * sigma * sqrt(LT / days_per_period)
+        - (s,S) policy for Max: Max = ROP + lead_time_demand (when no EOQ)
         """
         results: list[CalculationResult] = []
         excluded: list[ExcludedItem] = []
 
-        lead_time_factor = math.sqrt(options.lead_time_days / options.days_per_month)
+        days_per_period = options.days_per_period
+        period_label = options.granularity.value
 
         for item in items:
-            # Check minimum months requirement
             if options.min_months > 0 and item["active_months"] < options.min_months:
                 excluded.append(ExcludedItem(
                     site=item["site"],
@@ -1039,59 +1436,47 @@ class SafetyStockCalculator:
                     name=item["name"],
                     active_months=item["active_months"],
                     total_qty=item["total_qty"],
-                    reason=f"月數不足 ({item['active_months']} < {options.min_months})",
+                    reason=f"活躍期數不足 ({item['active_months']} < {options.min_months})",
                 ))
                 continue
 
-            # ✅ v4.3.4: Get Z-score for ABC class from options
             abc_class: ABCClass = item["abc_class"]
             applied_z = options.z_scores.get(abc_class.value, 1.65)
 
-            # Calculate safety stock
-            safety_stock = math.ceil(applied_z * item["std_dev"] * lead_time_factor)
-            safety_stock_value = safety_stock * item["price"]
-
-            # ✅ v4.2.1: 計算 CV (Coefficient of Variation)
-            # CV = std_dev / mean_demand
-            # 避免除以零
             mean_demand = item["mean"]
             std_dev = item["std_dev"]
 
-            if mean_demand > 0:
-                coefficient_of_variation = std_dev / mean_demand
-            else:
-                coefficient_of_variation = 0.0
+            sku_lt = self._resolve_lead_time(item["sku"], options, material_master)
+            lead_time_factor = math.sqrt(sku_lt / days_per_period)
 
-            # ✅ v4.2.1: 計算 Reorder Point (ROP)
-            # ROP = Lead Time Demand + Safety Stock
-            # Lead Time Demand = (mean_monthly_demand / 30) * lead_time_days
+            safety_stock = math.ceil(applied_z * std_dev * lead_time_factor)
+            safety_stock_value = safety_stock * item["price"]
+
+            coefficient_of_variation = std_dev / mean_demand if mean_demand > 0 else 0.0
+
             if mean_demand > 0:
-                daily_demand = mean_demand / options.days_per_month
-                lead_time_demand = daily_demand * options.lead_time_days
+                daily_demand = mean_demand / days_per_period
+                lead_time_demand = daily_demand * sku_lt
                 reorder_point = math.ceil(lead_time_demand + safety_stock)
             else:
-                reorder_point = safety_stock  # 如果沒有需求，ROP = SS
+                lead_time_demand = 0.0
+                reorder_point = safety_stock
 
-            # ✅ v4.2.1: 計算 Maximum Inventory (Max)
-            # Max = ROP + Order Quantity
-            # 如果沒有設定訂購量，使用 safety_stock 作為默認值
-            order_quantity = options.default_order_quantity
-            if order_quantity == 0:
-                order_quantity = safety_stock  # 默認訂購量 = 安全庫存
+            if options.default_order_quantity > 0:
+                max_inventory = math.ceil(reorder_point + options.default_order_quantity)
+            else:
+                max_inventory = math.ceil(reorder_point + lead_time_demand)
 
-            max_inventory = reorder_point + order_quantity
-
-            # Debug logging for first few items
             if len(results) < 3:
                 logger.debug(
                     f"SKU {item['sku']}: "
                     f"ABC={abc_class.value}, Z={applied_z:.2f}, "
                     f"mean={mean_demand:.2f}, std={std_dev:.2f}, "
                     f"CV={coefficient_of_variation:.3f}, SS={safety_stock}, "
-                    f"ROP={reorder_point}, Max={max_inventory}"
+                    f"ROP={reorder_point}, Max={max_inventory}, "
+                    f"granularity={period_label}"
                 )
 
-            # Determine stock health status
             status = self._determine_stock_health(
                 item["stock"], safety_stock, options.overstock_multiplier
             )
@@ -1107,10 +1492,10 @@ class SafetyStockCalculator:
                 total_months=item.get("total_months", item["active_months"]),
                 mean_demand=mean_demand,
                 std_dev=std_dev,
-                coefficient_of_variation=coefficient_of_variation,  # ✅ 新增
-                reorder_point=reorder_point,  # ✅ 新增
-                max_inventory=max_inventory,  # ✅ 新增
-                lead_time_days=options.lead_time_days,  # ✅ 新增
+                coefficient_of_variation=coefficient_of_variation,
+                reorder_point=reorder_point,
+                max_inventory=max_inventory,
+                lead_time_days=sku_lt,
                 safety_stock=safety_stock,
                 safety_stock_value=safety_stock_value,
                 applied_z_score=applied_z,
@@ -1119,6 +1504,9 @@ class SafetyStockCalculator:
                 outliers=item["outliers"],
                 outliers_removed=item["outliers_removed"],
                 has_insufficient_samples=item["has_insufficient_samples"],
+                trend_pct=item.get("trend_pct"),
+                trend_label=item.get("trend_label", "—"),
+                is_price_missing=item.get("is_price_missing", False),
                 monthly_values=item["monthly_values"],
                 price=item["price"],
             ))
