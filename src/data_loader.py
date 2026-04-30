@@ -836,9 +836,15 @@ def _extract_mrp_month_data(
     transfer_out = _safe_float(col_map.get("transfer_out"))
     independent_demand = _safe_float(col_map.get("independent_demand"))
 
-    # SAP MRP 的需求值通常是負數（代表消耗），取絕對值
+    # SAP MRP 的消耗類欄位通常是負數（代表消耗/出庫），統一取絕對值
+    # 公式 net_change = supply + transfer_in - demand - transfer_out - independent_demand
+    # 需要所有值為正數才能正確計算
     if demand < 0:
         demand = abs(demand)
+    if transfer_out < 0:
+        transfer_out = abs(transfer_out)
+    if independent_demand < 0:
+        independent_demand = abs(independent_demand)
 
     if all(v == 0 for v in [demand, supply, transfer_in, transfer_out, independent_demand]):
         return None

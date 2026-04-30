@@ -275,6 +275,83 @@ class TestPlanIntegrationCalculation:
         assert_close(r.final_stock, 450.0, tolerance=1.0)
 
 
+class TestPlanNegativeSignHandling:
+    """驗證 SAP 負數符號經 parser → pipeline 後的正確性。
+
+    _build_simple_plan 直接建構 MonthlyPlanData，不經過 parser，
+    所以這裡直接驗證 MonthlyPlanData 的 __post_init__ 行為。
+    SAP 負數符號由 _extract_mrp_month_data() 處理（見 unit test）。
+    """
+
+    def test_transfer_out_reduces_stock(self, calc):
+        """transfer_out=400 應減少庫存（非增加）。
+
+        驗算：
+          current_stock=4400, 無 demand/supply, transfer_out=1200
+          net = 0 + 0 - 0 - 1200 - 0 = -1200
+          ending = 4400 - 1200 = 3200
+        """
+        sales = _build_test_sales_data()
+        plan = _build_simple_plan(
+            site="1002", sku="SKU001", current_stock=4400,
+            months={
+                "202507": {"transfer_out": 1200},
+                "202508": {"transfer_out": 1000},
+            },
+        )
+
+        results, _, _ = calc.calculate(
+            sales_data=sales,
+            plan_data=plan,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+        )
+
+        r = next(r for r in results if r.sku == "SKU001")
+        assert r.has_plan is True
+        # final = 4400 - 1200 - 1000 = 2200
+        assert_close(r.final_stock, 2200.0, tolerance=1.0)
+        # 月投影
+        assert len(r.monthly_plan) == 2
+        assert_close(r.monthly_plan[0].ending_stock, 3200.0, tolerance=1.0)
+        assert_close(r.monthly_plan[1].ending_stock, 2200.0, tolerance=1.0)
+
+    def test_demand_supply_transfer_combined(self, calc):
+        """demand + supply + transfer_out 同時存在的正確計算。
+
+        驗算（模擬 235M110004200 at 1002）：
+          current_stock=2000
+          202507: demand=800, supply=2400, transfer_out=400
+            net = 2400 + 0 - 800 - 400 - 0 = 1200
+            ending = 2000 + 1200 = 3200
+          202508: transfer_out=200
+            net = 0 + 0 - 0 - 200 - 0 = -200
+            ending = 3200 - 200 = 3000
+        """
+        sales = _build_test_sales_data()
+        plan = _build_simple_plan(
+            site="1002", sku="SKU001", current_stock=2000,
+            months={
+                "202507": {"demand": 800, "supply": 2400, "transfer_out": 400},
+                "202508": {"transfer_out": 200},
+            },
+        )
+
+        results, _, _ = calc.calculate(
+            sales_data=sales,
+            plan_data=plan,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+        )
+
+        r = next(r for r in results if r.sku == "SKU001")
+        assert_close(r.monthly_plan[0].ending_stock, 3200.0, tolerance=1.0)
+        assert_close(r.monthly_plan[1].ending_stock, 3000.0, tolerance=1.0)
+        assert_close(r.final_stock, 3000.0, tolerance=1.0)
+
+
 class TestPlanDoesNotAffectSSCalculation:
     """確認 plan 資料不影響 SS/ROP/Max 的計算。"""
 

@@ -158,6 +158,71 @@ class TestExtractMrpMonthData:
         assert result.demand == 100.0
         assert result.supply == 0.0
 
+    def test_negative_transfer_out_converted(self):
+        """SAP 調撥(出) 為負數（代表出庫），取絕對值。
+
+        驗算：
+          transfer_out=-1200 → abs(-1200) = 1200
+          net_change = 0 + 0 - 0 - 1200 - 0 = -1200
+        """
+        row = pd.Series({"M202604調撥(出)": -1200})
+        col_map = {"transfer_out": "M202604調撥(出)"}
+        result = _extract_mrp_month_data(row, "202604", col_map)
+
+        assert result is not None
+        assert result.transfer_out == 1200.0
+        assert result.net_change == -1200.0
+
+    def test_positive_transfer_out_unchanged(self):
+        """transfer_out 若已是正數則不變。"""
+        row = pd.Series({"M202604調撥(出)": 500})
+        col_map = {"transfer_out": "M202604調撥(出)"}
+        result = _extract_mrp_month_data(row, "202604", col_map)
+
+        assert result is not None
+        assert result.transfer_out == 500.0
+        assert result.net_change == -500.0
+
+    def test_negative_independent_demand_converted(self):
+        """SAP 獨立需求為負數（代表消耗），取絕對值。
+
+        驗算：
+          independent_demand=-300 → abs(-300) = 300
+          net_change = 0 + 0 - 0 - 0 - 300 = -300
+        """
+        row = pd.Series({"M202604獨立需求": -300})
+        col_map = {"independent_demand": "M202604獨立需求"}
+        result = _extract_mrp_month_data(row, "202604", col_map)
+
+        assert result is not None
+        assert result.independent_demand == 300.0
+        assert result.net_change == -300.0
+
+    def test_mixed_negative_values_all_converted(self):
+        """demand/transfer_out/independent_demand 同時為負數，全部取絕對值。
+
+        驗算：
+          demand=abs(-800)=800, supply=2400, transfer_out=abs(-400)=400
+          net_change = 2400 + 0 - 800 - 400 - 0 = 1200
+        """
+        row = pd.Series({
+            "M202604實際需求": -800,
+            "M202604實際供給": 2400,
+            "M202604調撥(出)": -400,
+        })
+        col_map = {
+            "demand": "M202604實際需求",
+            "supply": "M202604實際供給",
+            "transfer_out": "M202604調撥(出)",
+        }
+        result = _extract_mrp_month_data(row, "202604", col_map)
+
+        assert result is not None
+        assert result.demand == 800.0
+        assert result.supply == 2400.0
+        assert result.transfer_out == 400.0
+        assert result.net_change == 1200.0
+
 
 # ============================================================================
 # _normalize_string_col 單元測試
