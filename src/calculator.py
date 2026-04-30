@@ -1554,6 +1554,11 @@ class SafetyStockCalculator:
 
             result.has_plan = True
             result.plan_stock = plan_item.current_stock
+            # 同步填入 current_stock，讓 Excel 匯出、JSON 匯出、前端顯示都能正確取值
+            # 此時 SS/ROP/Max 已經算完（_integrate_plan_data 在 _calculate_safety_stock 之後執行），
+            # 且 plan 模式的庫存狀態由 _determine_stock_health_with_plan 決定，不讀 current_stock，
+            # 所以這裡覆寫 current_stock 不影響任何計算
+            result.current_stock = plan_item.current_stock
 
             running_stock = plan_item.current_stock
             first_shortage: str | None = None

@@ -103,6 +103,7 @@ class TestPlanIntegrationBasic:
         assert r is not None
         assert r.has_plan is True
         assert r.plan_stock == 500.0
+        assert r.current_stock == 500.0  # current_stock 應同步自 plan_stock
         assert r.final_stock is not None
         assert r.suggested_order >= 0
         # 周轉率：total_qty=600, current_stock=500 → 1.2
