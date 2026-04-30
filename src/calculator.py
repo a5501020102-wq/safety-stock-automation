@@ -1548,6 +1548,27 @@ class SafetyStockCalculator:
         for result in results:
             plan_item = plan_data.get_item(result.site, result.sku)
 
+            # 總倉模式：site="總倉"，plan 中沒有此 site
+            # 需要加總各倉的庫存數量
+            if not plan_item and result.site == "總倉":
+                total_stock = 0.0
+                found = False
+                for item in plan_data.items.values():
+                    if item.sku == result.sku:
+                        total_stock += item.current_stock
+                        found = True
+                if found:
+                    result.has_plan = True
+                    result.plan_stock = total_stock
+                    result.current_stock = total_stock
+                    # 周轉率 = 銷貨總數 / 庫存加總
+                    if total_stock > 0 and result.total_qty >= 0:
+                        result.turnover_rate = round(result.total_qty / total_stock, 2)
+                    integrated_count += 1
+                else:
+                    result.has_plan = False
+                continue
+
             if not plan_item:
                 result.has_plan = False
                 continue
