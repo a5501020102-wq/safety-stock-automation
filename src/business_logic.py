@@ -1114,6 +1114,18 @@ def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
 
             # --- 期間明細（供前端展示） ---
             "monthly_values": [round(v, 2) for v in (getattr(r, "monthly_values", []) or [])],
+
+            # --- Plan 整合 ---
+            "has_plan": bool(getattr(r, "has_plan", False)),
+            "plan_stock": getattr(r, "plan_stock", None),
+            "final_stock": getattr(r, "final_stock", None),
+            "min_stock": getattr(r, "min_stock", None),
+            "min_stock_month": getattr(r, "min_stock_month", None),
+            "gap": getattr(r, "gap", None),
+            "suggested_order": _safe_int(getattr(r, "suggested_order", 0), 0),
+            "first_shortage_month": getattr(r, "first_shortage_month", None),
+            "order_deadline": getattr(r, "order_deadline", None),
+            "turnover_rate": getattr(r, "turnover_rate", None),
         })
 
     return out
