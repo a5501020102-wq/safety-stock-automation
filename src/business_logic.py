@@ -592,6 +592,7 @@ def _result_to_row(r: Any, granularity: str = "monthly") -> dict[str, Any]:
         "前置期(天)": _safe_int(getattr(r, "lead_time_days", 0), 0),
         "現有庫存": getattr(r, "current_stock", ""),
         "庫存狀態": _get_enum_value(getattr(r, "status", "")),
+        "周轉率": getattr(r, "turnover_rate", None) or "",
         "離群值數量": _safe_int(getattr(r, "outliers_removed", 0), 0),
         "單價": _safe_float(getattr(r, "price", 0), 0),
     }
