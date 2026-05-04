@@ -264,6 +264,10 @@ def calculate_comparison_mode(
             category_lead_times=category_lead_times,
             group_lead_times=group_lead_times,
             material_master=material_master,
+            date_from=date_from,
+            date_to=date_to,
+            trend_mode=trend_mode,
+            working_days_per_month=working_days_per_month,
             selected_weeks=selected_weeks,
         )
         logger.info(f"   ✅ 總倉計算完成: {len(results_total)} 筆")
