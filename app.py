@@ -476,6 +476,8 @@ def _build_parameters_snapshot(
         "enable_ma": options.enable_moving_average,
         "ma_window": options.ma_window if options.enable_moving_average else None,
         "granularity": getattr(options, "granularity", "monthly"),
+        "selected_weeks": getattr(options, "selected_weeks", None),
+        "working_days_per_month": options.days_per_period if getattr(options, "granularity", "monthly") == "monthly" else None,
         "engine_version": API_VERSION,
         "sales_filename": filenames.get("sales"),
         "price_filename": filenames.get("price"),
@@ -867,12 +869,18 @@ def export_excel():
                         ErrorCode.NO_RESULTS, f"出貨點 {site_filter} 沒有資料"
                     )
 
-            # 判斷是否為週模式日數據
-            selected_weeks_export = body.get("selectedWeeks") or body.get("selected_weeks")
-            is_weekly_daily = granularity == "weekly" and bool(selected_weeks_export)
-
             # 收集計算參數供摘要顯示
-            calc_params_export = body.get("calcParams") or body.get("calc_params") or {}
+            # 前端傳入的 calcParams 是 camelCase（來自 ParametersSnapshot）
+            raw_params = body.get("calcParams") or body.get("calc_params") or {}
+            calc_params_export = {_snake(k): v for k, v in raw_params.items()} if raw_params else {}
+
+            # 判斷是否為週模式日數據
+            selected_weeks_export = (
+                body.get("selectedWeeks")
+                or body.get("selected_weeks")
+                or calc_params_export.get("selected_weeks")
+            )
+            is_weekly_daily = granularity == "weekly" and bool(selected_weeks_export)
 
             excel_bytes = export_comparison_to_excel(
                 all_data=(all_results, [], all_sum),
@@ -898,7 +906,13 @@ def export_excel():
                         ErrorCode.NO_RESULTS, f"出貨點 {site_filter} 沒有資料"
                     )
 
-            selected_weeks_single = body.get("selectedWeeks") or body.get("selected_weeks")
+            raw_params_single = body.get("calcParams") or body.get("calc_params") or {}
+            params_single = {_snake(k): v for k, v in raw_params_single.items()} if raw_params_single else {}
+            selected_weeks_single = (
+                body.get("selectedWeeks")
+                or body.get("selected_weeks")
+                or params_single.get("selected_weeks")
+            )
             is_weekly_daily_single = granularity == "weekly" and bool(selected_weeks_single)
             excel_bytes = export_to_excel(results, [], summary, granularity=granularity, is_weekly_daily=is_weekly_daily_single)
             site_suffix = f"_{re.sub(r'[^a-zA-Z0-9_-]', '_', site_filter)}" if site_filter else ""

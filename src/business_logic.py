@@ -856,7 +856,8 @@ def export_comparison_to_excel(
                         param_values.append(f"{weeks[0]} ~ {weeks[-1]} ({len(weeks)} 週 / {len(weeks) * 7} 天)")
 
                 param_items.append("前置期")
-                param_values.append(f"{calc_params.get('lead_time', 30)} 天")
+                lt = calc_params.get("lead_time_days") or calc_params.get("lead_time", 30)
+                param_values.append(f"{lt} 天")
 
                 z = calc_params.get("z_scores", {})
                 if z:
