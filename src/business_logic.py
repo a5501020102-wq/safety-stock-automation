@@ -532,7 +532,7 @@ def _generate_recommendation(result: Any) -> dict[str, str]:
 # ============================================================================
 
 def export_to_excel(results: list[Any], excluded: list[Any], summary: Any,
-                    granularity: str = "monthly") -> bytes:
+                    granularity: str = "monthly", is_weekly_daily: bool = False) -> bytes:
     """
     匯出計算結果為 Excel 檔案
 
@@ -549,9 +549,9 @@ def export_to_excel(results: list[Any], excluded: list[Any], summary: Any,
     try:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             if results:
-                _write_results_sheet(writer, results, granularity=granularity)
+                _write_results_sheet(writer, results, granularity=granularity, is_weekly_daily=is_weekly_daily)
             if excluded:
-                _write_excluded_sheet(writer, excluded, granularity=granularity)
+                _write_excluded_sheet(writer, excluded, granularity=granularity, is_weekly_daily=is_weekly_daily)
             if summary:
                 _write_summary_sheet(writer, summary)
 
@@ -565,21 +565,27 @@ def export_to_excel(results: list[Any], excluded: list[Any], summary: Any,
         raise ValueError(f"無法匯出 Excel：{str(e)}") from e
 
 
-def _period_labels(granularity: str = "monthly") -> tuple:
-    """Return (active_label, mean_label) based on granularity."""
-    if granularity == "daily":
+def _period_labels(granularity: str = "monthly", is_weekly_daily: bool = False) -> tuple:
+    """Return (active_label, mean_label) based on granularity.
+
+    Args:
+        granularity: 粒度（"monthly", "weekly", "daily"）
+        is_weekly_daily: 週模式是否使用日數據計算（selected_weeks 有值時為 True）
+    """
+    # 週模式用日數據時，欄位名稱用「日」而非「周」
+    if granularity == "daily" or is_weekly_daily:
         return "活躍天數", "日平均需求"
     elif granularity == "weekly":
         return "活躍周數", "周平均需求"
     return "活躍月數", "月平均需求"
 
 
-def _result_to_row(r: Any, granularity: str = "monthly") -> dict[str, Any]:
+def _result_to_row(r: Any, granularity: str = "monthly", is_weekly_daily: bool = False) -> dict[str, Any]:
     """將單一 CalculationResult 轉為 Excel / 匯出用的 dict（共用邏輯）"""
     mean_demand = _safe_float(getattr(r, "mean_demand", 0), 0)
     std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
     cv = _resolve_cv(r)
-    active_label, mean_label = _period_labels(granularity)
+    active_label, mean_label = _period_labels(granularity, is_weekly_daily)
 
     return {
         "出貨點": getattr(r, "site", ""),
@@ -606,15 +612,16 @@ def _result_to_row(r: Any, granularity: str = "monthly") -> dict[str, Any]:
 
 
 def _write_results_sheet(writer, results: list[Any], sheet_name: str = "計算結果",
-                         granularity: str = "monthly") -> None:
+                         granularity: str = "monthly", is_weekly_daily: bool = False) -> None:
     """寫入計算結果工作表（支援自訂工作表名稱）"""
-    rows = [_result_to_row(r, granularity) for r in results]
+    rows = [_result_to_row(r, granularity, is_weekly_daily) for r in results]
     pd.DataFrame(rows).to_excel(writer, sheet_name=sheet_name, index=False)
 
 
-def _write_excluded_sheet(writer, excluded: list[Any], granularity: str = "monthly") -> None:
+def _write_excluded_sheet(writer, excluded: list[Any], granularity: str = "monthly",
+                          is_weekly_daily: bool = False) -> None:
     """寫入排除項目工作表"""
-    active_label = _period_labels(granularity)[0]
+    active_label = _period_labels(granularity, is_weekly_daily)[0]
     rows = []
     for e in excluded:
         rows.append({
@@ -802,6 +809,8 @@ def export_comparison_to_excel(
         total_data: tuple,
         comparison: dict,
         granularity: str = "monthly",
+        is_weekly_daily: bool = False,
+        calc_params: dict | None = None,
 ) -> bytes:
     """
     匯出對比模式的完整 Excel 分析
@@ -829,8 +838,47 @@ def export_comparison_to_excel(
             # ========================================
             # Sheet 1: 對比摘要
             # ========================================
+            # 計算參數資訊（放在摘要最前面）
+            param_items: list[str] = []
+            param_values: list[object] = []
+
+            if calc_params:
+                gran_label = "Weekly (日數據)" if is_weekly_daily else granularity.capitalize()
+                param_items.append("計算模式")
+                param_values.append(calc_params.get("calc_mode", "compare").capitalize())
+                param_items.append("時間粒度")
+                param_values.append(gran_label)
+
+                if is_weekly_daily:
+                    weeks = calc_params.get("selected_weeks", [])
+                    if weeks:
+                        param_items.append("分析範圍")
+                        param_values.append(f"{weeks[0]} ~ {weeks[-1]} ({len(weeks)} 週 / {len(weeks) * 7} 天)")
+
+                param_items.append("前置期")
+                param_values.append(f"{calc_params.get('lead_time', 30)} 天")
+
+                z = calc_params.get("z_scores", {})
+                if z:
+                    param_items.append("服務水準")
+                    param_values.append(f"A={z.get('A', '-')} / B={z.get('B', '-')} / C={z.get('C', '-')}")
+
+                param_items.append("離群值偵測")
+                param_values.append("開啟" if calc_params.get("enable_outlier", True) else "關閉")
+                param_items.append("移動平均")
+                param_values.append("開啟" if calc_params.get("enable_ma", False) else "關閉")
+
+                wdpm = calc_params.get("working_days_per_month")
+                if wdpm and granularity == "monthly":
+                    param_items.append("每月工作日")
+                    param_values.append(f"{wdpm} 天")
+
+                # 空行分隔
+                param_items.append("")
+                param_values.append("")
+
             comparison_data = {
-                "項目": [
+                "項目": param_items + [
                     "分倉總安全庫存",
                     "總倉總安全庫存",
                     "庫存差異",
@@ -842,7 +890,7 @@ def export_comparison_to_excel(
                     "分倉 SKU 數量",
                     "總倉 SKU 數量"
                 ],
-                "數值": [
+                "數值": param_values + [
                     _safe_float(comparison.get("total_all_safety_stock", 0), 0),
                     _safe_float(comparison.get("total_total_safety_stock", 0), 0),
                     _safe_float(comparison.get("inventory_saved", 0), 0),
@@ -868,14 +916,14 @@ def export_comparison_to_excel(
             # Sheet 2: 分倉計算
             # ========================================
             if results_all:
-                _write_results_sheet(writer, results_all, "分倉計算", granularity=granularity)
+                _write_results_sheet(writer, results_all, "分倉計算", granularity=granularity, is_weekly_daily=is_weekly_daily)
                 logger.info(f"✅ Sheet 2: 分倉計算 - {len(results_all)} 筆")
 
             # ========================================
             # Sheet 3: 總倉計算
             # ========================================
             if results_total:
-                _write_results_sheet(writer, results_total, "總倉計算", granularity=granularity)
+                _write_results_sheet(writer, results_total, "總倉計算", granularity=granularity, is_weekly_daily=is_weekly_daily)
                 logger.info(f"✅ Sheet 3: 總倉計算 - {len(results_total)} 筆")
 
             # ========================================

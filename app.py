@@ -867,11 +867,20 @@ def export_excel():
                         ErrorCode.NO_RESULTS, f"出貨點 {site_filter} 沒有資料"
                     )
 
+            # 判斷是否為週模式日數據
+            selected_weeks_export = body.get("selectedWeeks") or body.get("selected_weeks")
+            is_weekly_daily = granularity == "weekly" and bool(selected_weeks_export)
+
+            # 收集計算參數供摘要顯示
+            calc_params_export = body.get("calcParams") or body.get("calc_params") or {}
+
             excel_bytes = export_comparison_to_excel(
                 all_data=(all_results, [], all_sum),
                 total_data=(total_results, [], total_sum),
                 comparison=comparison,
                 granularity=granularity,
+                is_weekly_daily=is_weekly_daily,
+                calc_params=calc_params_export if calc_params_export else None,
             )
             site_suffix = f"_{re.sub(r'[^a-zA-Z0-9_-]', '_', site_filter)}" if site_filter else ""
             filename = f"safety_stock_compare{site_suffix}_{timestamp}.xlsx"
@@ -889,7 +898,9 @@ def export_excel():
                         ErrorCode.NO_RESULTS, f"出貨點 {site_filter} 沒有資料"
                     )
 
-            excel_bytes = export_to_excel(results, [], summary, granularity=granularity)
+            selected_weeks_single = body.get("selectedWeeks") or body.get("selected_weeks")
+            is_weekly_daily_single = granularity == "weekly" and bool(selected_weeks_single)
+            excel_bytes = export_to_excel(results, [], summary, granularity=granularity, is_weekly_daily=is_weekly_daily_single)
             site_suffix = f"_{re.sub(r'[^a-zA-Z0-9_-]', '_', site_filter)}" if site_filter else ""
             filename = f"safety_stock_{mode}{site_suffix}_{timestamp}.xlsx"
 
