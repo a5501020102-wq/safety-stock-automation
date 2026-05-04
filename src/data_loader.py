@@ -288,6 +288,11 @@ def load_sales_data(file_path: str | Path) -> SalesData:
             if max_date:
                 logger.info(f"📅 資料最大日期: {max_date.strftime('%Y-%m-%d')}")
 
+        # 提取可用的 ISO 週列表（供週模式選擇器使用）
+        available_weeks: list[str] = []
+        if "year_week" in df.columns:
+            available_weeks = sorted(df["year_week"].dropna().unique().tolist())
+
         return SalesData(
             df=df,
             available_sites=available_sites,
@@ -296,6 +301,7 @@ def load_sales_data(file_path: str | Path) -> SalesData:
             record_count=len(df),
             skipped_date_count=skipped_count,
             max_date=max_date,
+            available_weeks=available_weeks,
         )
 
     except Exception as e:

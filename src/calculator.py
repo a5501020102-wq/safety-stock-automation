@@ -179,6 +179,10 @@ class CalculationResult:
     monthly_values: list[float] = field(default_factory=list)
     price: float = 0.0
 
+    # 週模式日數據統計
+    data_point_count: int = 0
+    data_point_warning: str | None = None
+
 
 @dataclass
 class ExcludedItem:
@@ -268,6 +272,10 @@ class CalculationOptions:
     # Trend detection
     trend_mode: str = "none"  # "short" / "yoy" / "none"
 
+    # 週模式：選定的週列表（例如 ["2025-W10", "2025-W11", ...]）
+    # 有值時，週模式改用選定週內的日數據計算 mean/std，days_per_period 改為 1
+    selected_weeks: list[str] | None = None
+
 
 @dataclass
 class CalculationRequest:
@@ -344,11 +352,10 @@ class SafetyStockCalculator:
             date_to: datetime | None = None,
             trend_mode: str = "none",
             working_days_per_month: int | None = None,
+            selected_weeks: list[str] | None = None,
     ) -> tuple[list[CalculationResult], list[ExcludedItem], CalculationSummary]:
         """
         Execute the complete safety stock calculation.
-
-        ✅ v4.3.4: 新增 abc_thresholds 參數支援
 
         Args:
             sales_data: 銷貨資料
@@ -364,6 +371,7 @@ class SafetyStockCalculator:
             enable_outlier_detection: 是否啟用離群值檢測
             enable_moving_average: 是否啟用移動平均
             ma_window: 移動平均窗口大小
+            selected_weeks: 週模式下選定的週列表（例如 ["2025-W10", "2025-W11"]）
 
         Returns:
             (結果列表, 排除項目列表, 計算摘要)
@@ -393,6 +401,7 @@ class SafetyStockCalculator:
             date_to=date_to,
             trend_mode=trend_mode,
             working_days_per_month=working_days_per_month,
+            selected_weeks=selected_weeks,
         )
 
         # ✅ v4.3.4: 日誌輸出參數資訊
@@ -443,6 +452,7 @@ class SafetyStockCalculator:
             date_to: datetime | None = None,
             trend_mode: str = "none",
             working_days_per_month: int | None = None,
+            selected_weeks: list[str] | None = None,
     ) -> CalculationOptions:
         """Create calculation options with overrides applied to defaults."""
         # Resolve granularity
@@ -529,6 +539,11 @@ class SafetyStockCalculator:
 
         if working_days_per_month is not None and options.granularity == Granularity.MONTHLY:
             options.days_per_period = working_days_per_month
+
+        # 週模式：設定 selected_weeks
+        # 有值時改用日數據計算，days_per_period 在 _calculate_safety_stock 中覆寫為 1
+        if selected_weeks and options.granularity == Granularity.WEEKLY:
+            options.selected_weeks = selected_weeks.copy()
 
         return options
 
@@ -686,6 +701,12 @@ class SafetyStockCalculator:
 
             timeline = aggregated_data[composite_key]["timeline"]
             timeline[period_key] = timeline.get(period_key, 0.0) + qty
+
+            # 額外記錄日粒度資料（供週模式的日數據計算使用）
+            date_str = row.get("date_str")
+            if date_str:
+                daily_tl = aggregated_data[composite_key].setdefault("daily_timeline", {})
+                daily_tl[date_str] = daily_tl.get(date_str, 0.0) + qty
 
         if skipped_rows > 0:
             logger.info(f"  ℹ 跳過 {skipped_rows} 筆無效資料")
@@ -907,6 +928,49 @@ class SafetyStockCalculator:
 
         return filled_values, missing_count, len(all_keys), all_keys
 
+    @staticmethod
+    def _build_daily_values_from_weeks(
+            item: dict[str, Any],
+            selected_weeks: list[str],
+    ) -> tuple[list[float], float, int, list[str], int]:
+        """將 selected_weeks 轉為日數據序列。
+
+        Args:
+            item: 彙總後的品項資料（含 daily_timeline）
+            selected_weeks: 選定的週列表，例如 ["2025-W10", "2025-W11"]
+
+        Returns:
+            (daily_values, total_qty, active_days, period_keys, data_point_count)
+        """
+        daily_timeline = item.get("daily_timeline", {})
+        daily_values: list[float] = []
+        period_keys: list[str] = []
+
+        for week_str in sorted(selected_weeks):
+            # 解析 "2025-W10" → year=2025, week=10
+            parts = week_str.split("-W")
+            if len(parts) != 2:
+                continue
+            try:
+                year = int(parts[0])
+                week_num = int(parts[1])
+            except ValueError:
+                continue
+
+            # ISO 週的週一到週日（7 天）
+            monday = datetime.fromisocalendar(year, week_num, 1)
+            for day_offset in range(7):
+                day = monday + timedelta(days=day_offset)
+                day_key = day.strftime("%Y-%m-%d")
+                daily_values.append(daily_timeline.get(day_key, 0.0))
+                period_keys.append(day_key)
+
+        total_qty = sum(daily_values)
+        active_days = sum(1 for v in daily_values if v > 0)
+        data_point_count = len(daily_values)
+
+        return daily_values, total_qty, active_days, period_keys, data_point_count
+
     def _apply_moving_average(
             self,
             values: list[float],
@@ -981,33 +1045,46 @@ class SafetyStockCalculator:
         """
         items = []
         granularity = options.granularity
+        is_weekly_daily = (
+            granularity == Granularity.WEEKLY
+            and options.selected_weeks is not None
+            and len(options.selected_weeks) > 0
+        )
 
         for _key, item in aggregated.items():
-            filled_values, missing_count, total_periods, period_keys = self._fill_missing_periods(
-                item["timeline"],
-                granularity,
-                options.selected_months,
-                fill_value=0.0,
-                max_date=options.max_date,
-                date_from=options.date_from,
-                date_to=options.date_to,
-            )
-
-            if missing_count > 0:
-                logger.debug(
-                    f"{item['sku']}: 填補了 {missing_count} 個缺失期間 "
-                    f"(完整期數={total_periods}, 粒度={granularity.value})"
+            # 週模式 + selected_weeks：改用日數據計算
+            if is_weekly_daily:
+                period_values, total_qty, active_periods, period_keys, data_point_count = (
+                    self._build_daily_values_from_weeks(item, options.selected_weeks)
+                )
+                total_periods = data_point_count
+            else:
+                filled_values, missing_count, total_periods, period_keys = self._fill_missing_periods(
+                    item["timeline"],
+                    granularity,
+                    options.selected_months,
+                    fill_value=0.0,
+                    max_date=options.max_date,
+                    date_from=options.date_from,
+                    date_to=options.date_to,
                 )
 
-            period_values = filled_values
+                if missing_count > 0:
+                    logger.debug(
+                        f"{item['sku']}: 填補了 {missing_count} 個缺失期間 "
+                        f"(完整期數={total_periods}, 粒度={granularity.value})"
+                    )
 
-            # total_qty: only sum periods within selected range (consistency fix)
-            selected_keys = set(period_keys)
-            total_qty = sum(
-                v for k, v in item["timeline"].items() if k in selected_keys
-            )
+                period_values = filled_values
+                data_point_count = len(period_values)
 
-            active_periods = sum(1 for v in period_values if v > 0)
+                # total_qty: only sum periods within selected range (consistency fix)
+                selected_keys = set(period_keys)
+                total_qty = sum(
+                    v for k, v in item["timeline"].items() if k in selected_keys
+                )
+
+                active_periods = sum(1 for v in period_values if v > 0)
 
             # Step 1: MAD outlier detection on RAW period values (before MA)
             # Uses non-zero values for median/MAD, applies bounds to full series
@@ -1057,6 +1134,14 @@ class SafetyStockCalculator:
                 variance = sum((v - mean_val) ** 2 for v in smoothed_values) / (final_n - 1)
                 std_val = math.sqrt(variance)
 
+            # 數據不足警告（週模式日數據）
+            data_point_warning: str | None = None
+            if is_weekly_daily:
+                if data_point_count < 7:
+                    data_point_warning = f"分析數據僅 {data_point_count} 天，統計可靠性低，建議選擇更多週"
+                elif data_point_count < 14:
+                    data_point_warning = f"分析數據 {data_point_count} 天，結果僅供短期參考"
+
             # Trend detection
             trend_pct, trend_label = self._calculate_trend(
                 period_values, options.trend_mode, options.selected_months, period_keys,
@@ -1065,6 +1150,8 @@ class SafetyStockCalculator:
             items.append({
                 **item,
                 "monthly_values": period_values,
+                "data_point_count": data_point_count,
+                "data_point_warning": data_point_warning,
                 "smoothed_values": smoothed_values,
                 "active_months": active_periods,
                 "total_months": total_periods,
@@ -1429,7 +1516,13 @@ class SafetyStockCalculator:
         results: list[CalculationResult] = []
         excluded: list[ExcludedItem] = []
 
-        days_per_period = options.days_per_period
+        # 週模式 + selected_weeks：使用日數據，days_per_period = 1
+        is_weekly_daily = (
+            options.granularity == Granularity.WEEKLY
+            and options.selected_weeks is not None
+            and len(options.selected_weeks) > 0
+        )
+        days_per_period = 1 if is_weekly_daily else options.days_per_period
         period_label = options.granularity.value
 
         for item in items:
@@ -1513,6 +1606,8 @@ class SafetyStockCalculator:
                 is_price_missing=item.get("is_price_missing", False),
                 monthly_values=item["monthly_values"],
                 price=item["price"],
+                data_point_count=item.get("data_point_count", 0),
+                data_point_warning=item.get("data_point_warning"),
             ))
 
         return results, excluded

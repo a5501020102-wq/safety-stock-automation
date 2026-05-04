@@ -318,6 +318,7 @@ class SalesData:
     record_count: int
     skipped_date_count: int = 0
     max_date: datetime | None = None
+    available_weeks: list[str] = field(default_factory=list)  # ["2025-W01", ...]
 
 
 @dataclass

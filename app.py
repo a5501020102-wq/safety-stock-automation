@@ -360,6 +360,7 @@ def _build_upload_metadata(
             "skipped_date_count": int(data.skipped_date_count),
             "has_price_data": bool(data.has_price_data),
             "has_stock_data": bool(data.has_stock_data),
+            "available_weeks": list(data.available_weeks),
         }
 
     if file_type == "price":
@@ -628,6 +629,11 @@ def calculate():
         except (TypeError, ValueError):
             working_days = None
 
+    # 週模式：選定的週列表
+    selected_weeks = params.get("selected_weeks") or params.get("selectedWeeks")
+    if selected_weeks is not None and not isinstance(selected_weeks, list):
+        selected_weeks = None
+
     # --- Load data ----------------------------------------------------------
     try:
         sales_data = load_sales_data(sales_path)
@@ -682,6 +688,7 @@ def calculate():
                 date_to=date_to,
                 trend_mode=trend_mode,
                 working_days_per_month=working_days,
+                selected_weeks=selected_weeks,
             )
             # For the parameter snapshot, derive options from the (all) summary
             all_summary_obj = comparison_data["all"][2]
@@ -736,6 +743,7 @@ def calculate():
                 date_to=date_to,
                 trend_mode=trend_mode,
                 working_days_per_month=working_days,
+                selected_weeks=selected_weeks,
             )
 
             options_like = _OptionsSnapshot(

@@ -151,6 +151,7 @@ def calculate_comparison_mode(
         date_to: Any = None,
         trend_mode: str = "none",
         working_days_per_month: int | None = None,
+        selected_weeks: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     對比模式：同時計算分倉(all)與總倉(total)
@@ -237,6 +238,7 @@ def calculate_comparison_mode(
             date_to=date_to,
             trend_mode=trend_mode,
             working_days_per_month=working_days_per_month,
+            selected_weeks=selected_weeks,
         )
         logger.info(f"   ✅ 分倉計算完成: {len(results_all)} 筆")
 
@@ -262,6 +264,7 @@ def calculate_comparison_mode(
             category_lead_times=category_lead_times,
             group_lead_times=group_lead_times,
             material_master=material_master,
+            selected_weeks=selected_weeks,
         )
         logger.info(f"   ✅ 總倉計算完成: {len(results_total)} 筆")
 
@@ -1127,6 +1130,8 @@ def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
             "order_deadline": getattr(r, "order_deadline", None),
             "turnover_rate": getattr(r, "turnover_rate", None),
             "coverage_days": getattr(r, "coverage_days", None),
+            "data_point_count": _safe_int(getattr(r, "data_point_count", 0), 0),
+            "data_point_warning": getattr(r, "data_point_warning", None),
             "monthly_plan": [
                 {
                     "month": mp.month,
