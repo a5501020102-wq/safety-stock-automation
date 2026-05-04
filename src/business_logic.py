@@ -1126,6 +1126,20 @@ def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
             "first_shortage_month": getattr(r, "first_shortage_month", None),
             "order_deadline": getattr(r, "order_deadline", None),
             "turnover_rate": getattr(r, "turnover_rate", None),
+            "coverage_days": getattr(r, "coverage_days", None),
+            "monthly_plan": [
+                {
+                    "month": mp.month,
+                    "demand": mp.demand,
+                    "supply": mp.supply,
+                    "transfer_in": mp.transfer_in,
+                    "transfer_out": mp.transfer_out,
+                    "independent_demand": mp.independent_demand,
+                    "net_change": mp.net_change,
+                    "ending_stock": mp.ending_stock,
+                }
+                for mp in (getattr(r, "monthly_plan", []) or [])
+            ],
         })
 
     return out

@@ -165,6 +165,8 @@ class CalculationResult:
     monthly_plan: list[MonthlyPlanResult] = field(default_factory=list)
     # 周轉率 = 銷貨總數 / 庫存數量（需要 plan 報表提供庫存數量）
     turnover_rate: float | None = None
+    # 覆蓋天數 = 現有庫存 / 日均需求（表示庫存可撐幾天）
+    coverage_days: float | None = None
 
     # Trend detection
     trend_pct: float | None = None
@@ -1564,6 +1566,10 @@ class SafetyStockCalculator:
                     # 周轉率 = 銷貨總數 / 庫存加總
                     if total_stock > 0 and result.total_qty >= 0:
                         result.turnover_rate = round(result.total_qty / total_stock, 2)
+                    # 覆蓋天數 = 庫存加總 / 日均需求
+                    daily_demand = result.mean_demand / options.days_per_period if options.days_per_period > 0 else 0
+                    if daily_demand > 0 and total_stock > 0:
+                        result.coverage_days = round(total_stock / daily_demand, 1)
                     integrated_count += 1
                 else:
                     result.has_plan = False
@@ -1636,6 +1642,12 @@ class SafetyStockCalculator:
             # 負數庫存視為無效，不計算
             if plan_item.current_stock > 0 and result.total_qty >= 0:
                 result.turnover_rate = round(result.total_qty / plan_item.current_stock, 2)
+
+            # 覆蓋天數 = 現有庫存 / 日均需求
+            # 表示以目前庫存，按平均日需求可以撐幾天
+            daily_demand = result.mean_demand / options.days_per_period if options.days_per_period > 0 else 0
+            if daily_demand > 0 and plan_item.current_stock > 0:
+                result.coverage_days = round(plan_item.current_stock / daily_demand, 1)
 
             integrated_count += 1
 

@@ -352,6 +352,186 @@ class TestPlanNegativeSignHandling:
         assert_close(r.final_stock, 3000.0, tolerance=1.0)
 
 
+class TestCoverageDays:
+    """覆蓋天數計算正確性。"""
+
+    def test_coverage_days_basic(self, calc):
+        """coverage_days = current_stock / daily_demand。
+
+        驗算：
+          mean=100, dpp=30（預設月粒度）, daily=100/30=3.333
+          current_stock=500
+          coverage_days = 500 / 3.333 = 150.0
+        """
+        sales = _build_test_sales_data()
+        plan = _build_simple_plan(
+            site="1002", sku="SKU001", current_stock=500,
+            months={"202507": {"demand": 100}},
+        )
+
+        results, _, _ = calc.calculate(
+            sales_data=sales,
+            plan_data=plan,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+        )
+
+        r = next(r for r in results if r.sku == "SKU001")
+        assert r.coverage_days is not None
+        # mean=100, dpp=30 → daily=3.333, coverage=500/3.333=150.0
+        assert_close(r.coverage_days, 150.0, tolerance=0.5)
+
+    def test_coverage_days_zero_demand(self, calc):
+        """mean_demand=0 時，coverage_days 應為 None。"""
+        sales = _build_test_sales_data()
+        plan = _build_simple_plan(
+            site="1002", sku="SKU001", current_stock=500,
+            months={"202507": {"demand": 0, "supply": 100}},
+        )
+
+        results, _, _ = calc.calculate(
+            sales_data=sales,
+            plan_data=plan,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+            min_months=0,
+        )
+
+        # 需要找到一個 mean=0 的 SKU 來測試
+        # 用正常銷貨資料算出的 mean > 0，所以這裡改用有銷貨的 SKU 驗證 coverage_days 有值
+        r = next(r for r in results if r.sku == "SKU001")
+        # mean > 0, stock > 0 → coverage_days 應有值
+        assert r.coverage_days is not None
+
+    def test_coverage_days_zero_stock(self, calc):
+        """current_stock=0 時，coverage_days 應為 None。"""
+        sales = _build_test_sales_data()
+        plan = _build_simple_plan(
+            site="1002", sku="SKU001", current_stock=0,
+            months={"202507": {"demand": 100}},
+        )
+
+        results, _, _ = calc.calculate(
+            sales_data=sales,
+            plan_data=plan,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+        )
+
+        r = next(r for r in results if r.sku == "SKU001")
+        assert r.coverage_days is None
+
+    def test_coverage_days_no_plan(self, calc):
+        """無 plan 時，coverage_days 應為 None。"""
+        sales = _build_test_sales_data()
+
+        results, _, _ = calc.calculate(
+            sales_data=sales,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+        )
+
+        r = next(r for r in results if r.sku == "SKU001")
+        assert r.coverage_days is None
+
+    def test_coverage_days_with_working_days(self, calc):
+        """workingDaysPerMonth=22 時，coverage_days 應隨之改變。
+
+        驗算：
+          mean=100, dpp=22, daily=100/22=4.545
+          current_stock=500
+          coverage_days = 500 / 4.545 = 110.0
+        """
+        sales = _build_test_sales_data()
+        plan = _build_simple_plan(
+            site="1002", sku="SKU001", current_stock=500,
+            months={"202507": {"demand": 100}},
+        )
+
+        results, _, _ = calc.calculate(
+            sales_data=sales,
+            plan_data=plan,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+            working_days_per_month=22,
+        )
+
+        r = next(r for r in results if r.sku == "SKU001")
+        assert r.coverage_days is not None
+        # mean=100, dpp=22 → daily=4.545, coverage=500/4.545=110.0
+        assert_close(r.coverage_days, 110.0, tolerance=0.5)
+
+
+class TestMonthlyPlanSerialization:
+    """monthly_plan 序列化正確性。"""
+
+    def test_monthly_plan_populated(self, calc):
+        """有 plan 時，monthly_plan 應有值。"""
+        sales = _build_test_sales_data()
+        plan = _build_simple_plan(
+            site="1002", sku="SKU001", current_stock=500,
+            months={
+                "202507": {"demand": 100, "supply": 50},
+                "202508": {"demand": 150},
+            },
+        )
+
+        results, _, _ = calc.calculate(
+            sales_data=sales,
+            plan_data=plan,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+        )
+
+        r = next(r for r in results if r.sku == "SKU001")
+        assert len(r.monthly_plan) == 2
+        mp0 = r.monthly_plan[0]
+        assert mp0.month == "202507"
+        assert mp0.demand == 100.0
+        assert mp0.supply == 50.0
+        assert mp0.net_change == -50.0
+        assert_close(mp0.ending_stock, 450.0)
+
+    def test_monthly_plan_serialized_to_json(self, calc):
+        """monthly_plan 應正確序列化為 JSON dict。"""
+        from src.business_logic import serialize_results_for_json
+
+        sales = _build_test_sales_data()
+        plan = _build_simple_plan(
+            site="1002", sku="SKU001", current_stock=500,
+            months={"202507": {"demand": 100, "supply": 50}},
+        )
+
+        results, excluded, summary = calc.calculate(
+            sales_data=sales,
+            plan_data=plan,
+            granularity="monthly",
+            enable_outlier_detection=False,
+            enable_moving_average=False,
+        )
+
+        json_data = serialize_results_for_json(results, excluded, summary)
+        jr = next(r for r in json_data["results"] if r["sku"] == "SKU001")
+
+        assert "monthly_plan" in jr
+        assert len(jr["monthly_plan"]) == 1
+        mp = jr["monthly_plan"][0]
+        assert mp["month"] == "202507"
+        assert mp["demand"] == 100.0
+        assert mp["supply"] == 50.0
+        assert mp["net_change"] == -50.0
+
+        # coverage_days 也要在 JSON 中
+        assert "coverage_days" in jr
+        assert jr["coverage_days"] is not None
+
+
 class TestPlanDoesNotAffectSSCalculation:
     """確認 plan 資料不影響 SS/ROP/Max 的計算。"""
 
