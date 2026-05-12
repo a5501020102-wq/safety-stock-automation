@@ -293,7 +293,7 @@ class EmailNotifier:
         <body>
             <div class="container">
                 <div class="header">
-                    <h2 style="margin: 0;">📊 SS Automation 通知</h2>
+                    <h2 style="margin: 0;"> SS Automation 通知</h2>
                     <p style="margin: 5px 0 0 0; opacity: 0.9;">{payload.notification_type.value}</p>
                 </div>
                 <div class="content">
@@ -414,12 +414,12 @@ class LineNotifier:
         """Format LINE Notify message."""
         # Priority emoji
         priority_emoji = {
-            NotificationPriority.URGENT: "🚨",
-            NotificationPriority.HIGH: "⚠️",
-            NotificationPriority.NORMAL: "📊",
-            NotificationPriority.LOW: "ℹ️",
+            NotificationPriority.URGENT: "",
+            NotificationPriority.HIGH: "",
+            NotificationPriority.NORMAL: "",
+            NotificationPriority.LOW: "ℹ",
         }
-        emoji = priority_emoji.get(payload.priority, "📊")
+        emoji = priority_emoji.get(payload.priority, "")
 
         lines = [
             f"\n{emoji} SS Automation 通知",
@@ -496,9 +496,9 @@ class NotificationManager:
         details = {
             "計算料號": summary.total_skus,
             "排除料號": summary.excluded_count,
-            "缺貨風險 🔴": summary.shortage_risk_count,
-            "健康 🟢": summary.healthy_count,
-            "呆滯風險 🔵": summary.overstock_risk_count,
+            "缺貨風險 ": summary.shortage_risk_count,
+            "健康 ": summary.healthy_count,
+            "呆滯風險 ": summary.overstock_risk_count,
             "前置期": f"{summary.lead_time_days} 天",
         }
 
@@ -510,10 +510,10 @@ class NotificationManager:
         # Build summary text
         summary_text = f"安全庫存計算完成，共 {summary.total_skus} 個料號。"
         if summary.shortage_risk_count > 0:
-            summary_text += f"\n⚠️ 有 {summary.shortage_risk_count} 個料號存在缺貨風險！"
+            summary_text += f"\n 有 {summary.shortage_risk_count} 個料號存在缺貨風險！"
         if validation_result and hasattr(validation_result,
                                          'has_blocking_changes') and validation_result.has_blocking_changes:
-            summary_text += f"\n❌ 有 {len(validation_result.force_review)} 筆變動需人工確認！"
+            summary_text += f"\n 有 {len(validation_result.force_review)} 筆變動需人工確認！"
 
         payload = NotificationPayload(
             notification_type=NotificationType.CALCULATION_COMPLETE,
@@ -556,7 +556,7 @@ class NotificationManager:
         payload = NotificationPayload(
             notification_type=NotificationType.SHORTAGE_RISK,
             priority=NotificationPriority.URGENT,
-            subject=f"[SS Automation] 🚨 缺貨風險警報 - {len(shortage_items)} 項目",
+            subject=f"[SS Automation] 缺貨風險警報 - {len(shortage_items)} 項目",
             summary=f"偵測到 {len(shortage_items)} 個料號存在缺貨風險，請立即處理！",
             details=details,
         )
@@ -594,7 +594,7 @@ class NotificationManager:
         payload = NotificationPayload(
             notification_type=NotificationType.LARGE_CHANGE,
             priority=NotificationPriority.HIGH,
-            subject=f"[SS Automation] ⚠️ 大幅變動需審核 - {len(force_review)} 項目",
+            subject=f"[SS Automation] 大幅變動需審核 - {len(force_review)} 項目",
             summary=f"有 {len(force_review)} 筆安全庫存變動超過 50%，需人工確認後才能上傳。",
             details=details,
         )
@@ -629,7 +629,7 @@ class NotificationManager:
         payload = NotificationPayload(
             notification_type=NotificationType.ERROR,
             priority=NotificationPriority.URGENT,
-            subject="[SS Automation] ❌ 執行錯誤",
+            subject="[SS Automation] 執行錯誤",
             summary=f"SS Automation 執行時發生錯誤：{error_message}",
             details=details,
         )
@@ -702,9 +702,9 @@ def send_calculation_notification(summary, excel_path):
         # Log results
         for result in results:
             if result.success:
-                logger.info(f"✓ 通知已發送 ({result.channel}): {result.message}")
+                logger.info(f" 通知已發送 ({result.channel}): {result.message}")
             else:
-                logger.warning(f"✗ 通知失敗 ({result.channel}): {result.error}")
+                logger.warning(f" 通知失敗 ({result.channel}): {result.error}")
 
         return results
 
@@ -740,13 +740,13 @@ def test_notification():
 
     print("\n=== 通知測試結果 ===")
     for result in results:
-        status = "✅ 成功" if result.success else "❌ 失敗"
+        status = " 成功" if result.success else " 失敗"
         print(f"{status} - {result.channel}: {result.message}")
         if result.error:
             print(f"   錯誤: {result.error}")
 
     if not results:
-        print("⚠️  無啟用的通知管道")
+        print(" 無啟用的通知管道")
 
     return results
 

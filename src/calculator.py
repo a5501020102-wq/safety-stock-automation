@@ -7,17 +7,17 @@ Author: 松鼠
 Last Updated: 2026-01-29
 
 Changelog v4.3.4:
-- ✅ Added: z_scores 參數支援（A/B/C 類服務水準）
-- ✅ Added: abc_thresholds 參數支援（ABC 分類門檻）
-- ✅ Fixed: calculate() 方法接受新參數
-- ✅ Improved: 參數覆寫邏輯
+- Added: z_scores 參數支援（A/B/C 類服務水準）
+- Added: abc_thresholds 參數支援（ABC 分類門檻）
+- Fixed: calculate() 方法接受新參數
+- Improved: 參數覆寫邏輯
 
 Changelog v4.2.1:
-- ✅ Fixed: 添加 CV (Coefficient of Variation) 計算
-- ✅ Fixed: 添加 reorder_point 計算
-- ✅ Fixed: 添加 max_inventory 計算
-- ✅ Improved: 完整的數據驗證
-- ✅ Improved: 更好的錯誤處理
+- Fixed: 添加 CV (Coefficient of Variation) 計算
+- Fixed: 添加 reorder_point 計算
+- Fixed: 添加 max_inventory 計算
+- Improved: 完整的數據驗證
+- Improved: 更好的錯誤處理
 
 Key Features:
 1. CV = std_dev / mean_demand (避免除以零)
@@ -132,7 +132,7 @@ class CalculationResult:
     mean_demand: float = 0.0
     std_dev: float = 0.0
 
-    # ✅ v4.2.1: 新增 CV 和 reorder_point
+    # v4.2.1: 新增 CV 和 reorder_point
     coefficient_of_variation: float = 0.0  # CV = std_dev / mean_demand
     reorder_point: int = 0  # ROP = lead_time_demand + safety_stock
     max_inventory: int = 0  # Max = reorder_point + order_quantity (可選)
@@ -255,7 +255,7 @@ class CalculationOptions:
     ma_fill_missing: bool = True
     ma_fill_value: float = 0.0
 
-    # ✅ v4.2.1: 新增訂購量參數（用於計算 max_inventory）
+    # v4.2.1: 新增訂購量參數（用於計算 max_inventory）
     default_order_quantity: int = 0
 
     # v4.4.0: 資料最大日期（用於排除未完成月份）
@@ -404,8 +404,8 @@ class SafetyStockCalculator:
             selected_weeks=selected_weeks,
         )
 
-        # ✅ v4.3.4: 日誌輸出參數資訊
-        logger.info("📊 計算參數：")
+        # v4.3.4: 日誌輸出參數資訊
+        logger.info(" 計算參數：")
         logger.info(f"   服務水準: A={options.z_scores['A']:.2f}, "
                     f"B={options.z_scores['B']:.2f}, "
                     f"C={options.z_scores['C']:.2f}")
@@ -428,10 +428,10 @@ class SafetyStockCalculator:
         # Execute calculation pipeline
         try:
             results, excluded, summary = self._execute_calculation(request)
-            logger.info(f"✓ 計算完成: {summary.total_skus} 個 SKU")
+            logger.info(f" 計算完成: {summary.total_skus} 個 SKU")
             return results, excluded, summary
         except Exception as e:
-            logger.error(f"✗ 計算失敗: {e}")
+            logger.error(f" 計算失敗: {e}")
             raise
 
     def _create_options(
@@ -499,7 +499,7 @@ class SafetyStockCalculator:
             options.z_scores = z_scores.copy()
             logger.debug(f"覆寫 z_scores: {z_scores}")
 
-        # ✅ v4.3.4: 處理 abc_thresholds 覆寫
+        # v4.3.4: 處理 abc_thresholds 覆寫
         if abc_thresholds is not None:
             options.abc_thresholds = abc_thresholds.copy()
             logger.debug(f"覆寫 abc_thresholds: {abc_thresholds}")
@@ -559,15 +559,15 @@ class SafetyStockCalculator:
         # Step 2: Aggregate data
         logger.info("步驟 2: 彙總銷貨資料")
         aggregated = self._aggregate_data(request)
-        logger.info(f"  ✓ 彙總了 {len(aggregated)} 個 SKU")
+        logger.info(f" 彙總了 {len(aggregated)} 個 SKU")
 
         # Step 3: Calculate statistics
         logger.info("步驟 3: 計算統計數據")
         logger.info(f"  粒度: {request.options.granularity.value}")
         if request.options.enable_moving_average:
-            logger.info(f"  ✓ 啟用 {request.options.ma_window} 期移動平均")
+            logger.info(f" 啟用 {request.options.ma_window} 期移動平均")
         items_with_stats = self._calculate_statistics(aggregated, request.options)
-        logger.info(f"  ✓ 計算了 {len(items_with_stats)} 個品項的統計")
+        logger.info(f" 計算了 {len(items_with_stats)} 個品項的統計")
 
         # Step 4: ABC Classification
         logger.info("步驟 4: 執行 ABC 分類")
@@ -578,8 +578,8 @@ class SafetyStockCalculator:
         results, excluded = self._calculate_safety_stock(
             items_with_stats, request.options, request.material_master
         )
-        logger.info(f"  ✓ 計算成功: {len(results)} 個")
-        logger.info(f"  ✓ 排除項目: {len(excluded)} 個")
+        logger.info(f" 計算成功: {len(results)} 個")
+        logger.info(f" 排除項目: {len(excluded)} 個")
 
         # Step 6: Integrate Plan Data (v4.1.0)
         if request.plan_data and request.plan_data.items:
@@ -650,7 +650,7 @@ class SafetyStockCalculator:
                 error_summary += f"\n... 還有 {len(errors) - 10} 個錯誤"
             raise ValueError(f"資料驗證失敗:\n{error_summary}")
 
-        logger.info(f"  ✓ 驗證通過: {len(df)} 筆記錄")
+        logger.info(f" 驗證通過: {len(df)} 筆記錄")
 
     @staticmethod
     def _get_period_key(row: pd.Series, granularity: Granularity) -> str | None:
@@ -1746,7 +1746,7 @@ class SafetyStockCalculator:
 
             integrated_count += 1
 
-        logger.info(f"  ✓ 整合了 {integrated_count} 個品項的庫存計畫")
+        logger.info(f" 整合了 {integrated_count} 個品項的庫存計畫")
 
     def _determine_stock_health_with_plan(
             self,

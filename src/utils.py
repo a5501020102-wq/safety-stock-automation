@@ -125,10 +125,10 @@ def status_to_chinese(status_value: str) -> str:
         Chinese display text with emoji
     """
     mapping = {
-        "red": "🔴 缺貨風險",
-        "green": "🟢 健康",
-        "blue": "🔵 呆滯風險",
-        "gray": "⚪ 無資料",
+        "red": " 缺貨風險",
+        "green": " 健康",
+        "blue": " 呆滯風險",
+        "gray": " 無資料",
     }
     return mapping.get(status_value, str(status_value))
 

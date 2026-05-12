@@ -70,7 +70,7 @@ def export_to_excel(
             # Sheet 4: Excluded
             _write_excluded_sheet(writer, excluded)
 
-        logger.info(f"✓ Excel 匯出完成: {output_path}")
+        logger.info(f" Excel 匯出完成: {output_path}")
 
     except Exception as e:
         logger.error(f"Excel 匯出失敗: {e}")
@@ -240,7 +240,7 @@ def export_to_json(
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
-        logger.info(f"✓ JSON 匯出完成: {output_path}")
+        logger.info(f" JSON 匯出完成: {output_path}")
 
     except Exception as e:
         logger.error(f"JSON 匯出失敗: {e}")
