@@ -1,14 +1,14 @@
 // ============================================================================
 // 安全庫存自動化系統 v4.3.4 - 主程式（Z-scores 修復版）
 // ============================================================================
-// ✅ Code Review 完成
-// ✅ Debug 完成
-// ✅ Z-scores 參數格式已修復
+// Code Review 完成
+// Debug 完成
+// Z-scores 參數格式已修復
 //
 // v4.3.4 更新：
-// - ✅ 修復 z_scores 參數格式（z_a/z_b/z_c → z_scores: {A, B, C}）
-// - ✅ 新增參數驗證和除錯日誌
-// - ✅ 支援 abc_thresholds 參數（預設值）
+// - 修復 z_scores 參數格式（z_a/z_b/z_c → z_scores: {A, B, C}）
+// - 新增參數驗證和除錯日誌
+// - 支援 abc_thresholds 參數（預設值）
 //
 // 功能：檔案上傳、參數設定、計算、結果顯示、SAP MM17 匯出
 // 架構：混合式 (Python 後端 + JavaScript 前端)
@@ -123,7 +123,7 @@ const API = {
    */
   async exportExcel(mode = null) {
     const payload = { mode };
-    console.log('📤 Excel 匯出請求:', payload);
+    console.log(' Excel 匯出請求:', payload);
 
     const resp = await fetch('/api/export/excel', {
       method: 'POST',
@@ -156,7 +156,7 @@ const API = {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
 
-    console.log('✅ Excel 匯出成功:', filename);
+    console.log(' Excel 匯出成功:', filename);
     return filename;
   },
 
@@ -165,7 +165,7 @@ const API = {
    */
   async exportSAP(format = 'xlsx', mode = null) {
     const payload = { format, mode };
-    console.log('📤 SAP MM17 匯出請求:', payload);
+    console.log(' SAP MM17 匯出請求:', payload);
 
     const resp = await fetch('/api/export/sap', {
       method: 'POST',
@@ -198,7 +198,7 @@ const API = {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
 
-    console.log('✅ SAP MM17 匯出成功:', filename);
+    console.log(' SAP MM17 匯出成功:', filename);
     return filename;
   }
 };
@@ -296,12 +296,12 @@ function initFileUploads() {
       if (!file) return;
 
       const fileTypeMap = { sales: '銷貨', price: '單價', plan: '庫存' };
-      console.log(`📤 上傳${fileTypeMap[type]}資料:`, file.name, file.type, file.size);
+      console.log(` 上傳${fileTypeMap[type]}資料:`, file.name, file.type, file.size);
 
       try {
         UI.showLoading(`上傳 ${file.name}...`);
         const result = await apiMethod(file);
-        console.log(`📥 上傳結果 (${type}):`, result);
+        console.log(` 上傳結果 (${type}):`, result);
 
         AppState.uploadedFiles[type] = file.name;
 
@@ -309,7 +309,7 @@ function initFileUploads() {
         const fileInfo = cardEl.querySelector('.file-info');
         if (fileInfo) {
           fileInfo.innerHTML = `
-            <span class="file-name">✅ ${file.name}</span>
+            <span class="file-name"> ${file.name}</span>
             <span class="file-size">${(file.size / 1024).toFixed(1)} KB</span>
           `;
           fileInfo.style.display = 'flex';
@@ -322,13 +322,13 @@ function initFileUploads() {
           const calcBtn = document.getElementById('calculateBtn');
           if (calcBtn) {
             calcBtn.disabled = false;
-            console.log('✅ 計算按鈕已啟用');
+            console.log(' 計算按鈕已啟用');
           }
         }
 
         UI.showAlert(`${file.name} 上傳成功`, 'success');
       } catch (error) {
-        console.error(`❌ 上傳失敗 (${type}):`, error);
+        console.error(` 上傳失敗 (${type}):`, error);
         UI.showAlert(`上傳失敗：${error.message}`, 'error');
 
         // 重置輸入
@@ -427,14 +427,14 @@ function initCalculationControls() {
  */
 async function handleCalculation() {
   const params = getCalculationParams();
-  console.log('📤 計算參數:', params);
+  console.log(' 計算參數:', params);
 
   try {
     UI.hideAllAlerts();
     UI.showLoading('計算中...');
 
     const result = await API.calculate(params);
-    console.log('📥 計算結果:', result);
+    console.log(' 計算結果:', result);
 
     AppState.calculationResult = result;
     AppState.currentMode = result.mode;
@@ -443,7 +443,7 @@ async function handleCalculation() {
 
     UI.showAlert('計算完成', 'success');
   } catch (error) {
-    console.error('❌ 計算錯誤:', error);
+    console.error(' 計算錯誤:', error);
     UI.showAlert(`計算失敗：${error.message}`, 'error');
   } finally {
     UI.hideLoading();
@@ -461,7 +461,7 @@ function getCalculationParams() {
   const selectedMonths = Array.from(formData.getAll('selectedMonths')).map(Number);
 
   // ========================================
-  // ✅ v4.3.4: 修復 z_scores 參數格式
+  // v4.3.4: 修復 z_scores 參數格式
   // ========================================
   const zScores = {
     A: parseFloat(formData.get('zA') || 2.05),
@@ -469,18 +469,18 @@ function getCalculationParams() {
     C: parseFloat(formData.get('zC') || 1.28)
   };
 
-  // ✅ 驗證 z_scores 數值合理性
+  // 驗證 z_scores 數值合理性
   Object.keys(zScores).forEach(key => {
     const value = zScores[key];
     if (isNaN(value) || value < 0.5 || value > 3.5) {
-      console.warn(`⚠️  Z-score ${key} 值異常: ${value}，使用預設值`);
+      console.warn(` Z-score ${key} 值異常: ${value}，使用預設值`);
       const defaults = { A: 2.05, B: 1.65, C: 1.28 };
       zScores[key] = defaults[key];
     }
   });
 
   // ========================================
-  // ✅ v4.3.4: 新增 abc_thresholds 支援（使用預設值）
+  // v4.3.4: 新增 abc_thresholds 支援（使用預設值）
   // ========================================
   const abcThresholds = {
     A: 0.80,  // 80% 累積占比
@@ -497,17 +497,17 @@ function getCalculationParams() {
     lead_time: parseInt(formData.get('leadTime') || 30),
     min_months: parseInt(formData.get('minMonths') || 2),
     enable_outlier: document.getElementById('enableOutlier')?.checked !== false,
-    z_scores: zScores,              // ✅ 修正後的格式
-    abc_thresholds: abcThresholds,  // ✅ 新增
+    z_scores: zScores, // 修正後的格式
+    abc_thresholds: abcThresholds, // 新增
     selected_months: selectedMonths.length > 0 ? selectedMonths : [1,2,3,4,5,6,7,8,9,10,11,12]
   };
 
   // ========================================
-  // ✅ 除錯日誌
+  // 除錯日誌
   // ========================================
-  console.log('📊 服務水準 (Z-scores):', zScores);
-  console.log('📊 ABC 門檻:', abcThresholds);
-  console.log('📤 完整計算參數:', params);
+  console.log(' 服務水準 (Z-scores):', zScores);
+  console.log(' ABC 門檻:', abcThresholds);
+  console.log(' 完整計算參數:', params);
 
   return params;
 }
@@ -516,7 +516,7 @@ function getCalculationParams() {
  * 處理計算完成
  */
 function handleCalculationComplete(result) {
-  console.log('🔄 計算完成處理: mode=' + result.mode);
+  console.log(' 計算完成處理: mode=' + result.mode);
 
   const resultsSection = document.getElementById('resultsSection');
   const comparisonSection = document.getElementById('comparisonSection');
@@ -532,7 +532,7 @@ function handleCalculationComplete(result) {
 
   if (result.mode === 'compare') {
     // 對比模式
-    console.log('📊 進入對比模式');
+    console.log(' 進入對比模式');
 
     if (comparisonSection) comparisonSection.classList.remove('d-none');
     if (summaryCard) summaryCard.style.display = 'none';
@@ -542,15 +542,15 @@ function handleCalculationComplete(result) {
     if (window.ComparisonView && typeof window.ComparisonView.render === 'function') {
       try {
         window.ComparisonView.render(result);
-        console.log('✅ 對比視圖渲染完成');
+        console.log(' 對比視圖渲染完成');
       } catch (error) {
-        console.error('❌ 對比視圖渲染錯誤:', error);
+        console.error(' 對比視圖渲染錯誤:', error);
         UI.showAlert('對比視圖渲染失敗', 'error');
       }
     }
   } else {
     // 標準模式
-    console.log('📦 進入標準模式');
+    console.log(' 進入標準模式');
 
     if (comparisonSection) comparisonSection.classList.add('d-none');
     if (summaryCard) summaryCard.style.display = 'block';
@@ -839,7 +839,7 @@ async function handleExcelExport() {
 
     UI.showAlert('Excel 匯出成功', 'success');
   } catch (error) {
-    console.error('❌ Excel 匯出錯誤:', error);
+    console.error(' Excel 匯出錯誤:', error);
     UI.showAlert(`Excel 匯出失敗：${error.message}`, 'error');
   } finally {
     UI.hideLoading();
@@ -854,7 +854,7 @@ async function handleExcelExport() {
  * SAP MM17 匯出主函數
  */
 async function exportSapMM17(format) {
-  console.log(`📊 SAP MM17 匯出開始: ${format}`);
+  console.log(` SAP MM17 匯出開始: ${format}`);
 
   try {
     if (!AppState.calculationResult) {
@@ -876,7 +876,7 @@ async function exportSapMM17(format) {
     await API.exportSAP(format, exportMode);
     UI.showAlert(`SAP MM17 ${format.toUpperCase()} 匯出成功`, 'success');
   } catch (error) {
-    console.error('❌ SAP MM17 匯出錯誤:', error);
+    console.error(' SAP MM17 匯出錯誤:', error);
     UI.showAlert(`SAP MM17 匯出失敗：${error.message}`, 'error');
   } finally {
     UI.hideLoading();
@@ -889,19 +889,19 @@ async function exportSapMM17(format) {
 function updateSapModeSelector() {
   const selector = document.getElementById('sapModeSelector');
   if (!selector) {
-    console.warn('⚠️  sapModeSelector 元素不存在');
+    console.warn(' sapModeSelector 元素不存在');
     return;
   }
 
   const currentMode = AppState.currentMode;
-  console.log(`🔄 更新 SAP 模式選擇器: mode=${currentMode}`);
+  console.log(` 更新 SAP 模式選擇器: mode=${currentMode}`);
 
   if (currentMode === 'compare') {
     selector.classList.remove('d-none');
-    console.log('✅ SAP 模式選擇器已顯示');
+    console.log(' SAP 模式選擇器已顯示');
   } else {
     selector.classList.add('d-none');
-    console.log('✅ SAP 模式選擇器已隱藏');
+    console.log(' SAP 模式選擇器已隱藏');
   }
 }
 
@@ -915,13 +915,13 @@ function updateSapModeSelector() {
 function createSapMM17PopupMenu() {
   const popup = document.getElementById('sapMM17PopupMenu');
   if (!popup) {
-    console.error('❌ 找不到 sapMM17PopupMenu 容器');
+    console.error(' 找不到 sapMM17PopupMenu 容器');
     return;
   }
 
   // 如果已經創建過，跳過
   if (popup.innerHTML) {
-    console.log('✅ 彈出菜單已存在，跳過創建');
+    console.log(' 彈出菜單已存在，跳過創建');
     return;
   }
 
@@ -931,7 +931,7 @@ function createSapMM17PopupMenu() {
   // 創建內容
   popup.innerHTML = `
     <div class="sap-popup-title">
-      📤 SAP MM17 匯出
+       SAP MM17 匯出
     </div>
     <div class="sap-popup-subtitle">
       格式：MATNR, WERKS, EISBE
@@ -941,25 +941,25 @@ function createSapMM17PopupMenu() {
     </div>
     <button id="sapPopupXlsxBtn" type="button" class="sap-popup-btn sap-popup-btn-xlsx">
       <i class="fas fa-file-excel"></i>
-      📊 XLSX 格式
+       XLSX 格式
     </button>
     <button id="sapPopupCsvBtn" type="button" class="sap-popup-btn sap-popup-btn-csv">
       <i class="fas fa-file-csv"></i>
-      📄 CSV 格式
+       CSV 格式
     </button>
     <button id="sapPopupCancelBtn" type="button" class="sap-popup-btn-cancel">
       取消
     </button>
   `;
 
-  console.log('✅ SAP MM17 彈出菜單已創建');
+  console.log(' SAP MM17 彈出菜單已創建');
 }
 
 /**
  * 綁定 SAP MM17 事件（修復版）
  */
 function bindSapMM17Events() {
-  console.log('🔧 開始綁定 SAP MM17 事件（修復版）...');
+  console.log(' 開始綁定 SAP MM17 事件（修復版）...');
 
   // 創建彈出菜單
   createSapMM17PopupMenu();
@@ -969,19 +969,19 @@ function bindSapMM17Events() {
   const popup = document.getElementById('sapMM17PopupMenu');
 
   if (!sapBtn) {
-    console.error('❌ exportSAPBtn 不存在');
+    console.error(' exportSAPBtn 不存在');
     return;
   }
 
   if (!popup) {
-    console.error('❌ sapMM17PopupMenu 不存在');
+    console.error(' sapMM17PopupMenu 不存在');
     return;
   }
 
   // 清除舊事件（使用克隆方式）
   const newSapBtn = sapBtn.cloneNode(true);
   sapBtn.parentNode.replaceChild(newSapBtn, sapBtn);
-  console.log('✅ 已清除舊事件監聽器');
+  console.log(' 已清除舊事件監聽器');
 
   // 重新獲取按鈕
   const cleanSapBtn = document.getElementById('exportSAPBtn');
@@ -991,9 +991,9 @@ function bindSapMM17Events() {
     e.preventDefault();
     e.stopPropagation();
     popup.style.display = 'block';
-    console.log('✅ SAP MM17 彈出菜單已顯示');
+    console.log(' SAP MM17 彈出菜單已顯示');
   });
-  console.log('✅ 主按鈕點擊事件已綁定');
+  console.log(' 主按鈕點擊事件已綁定');
 
   // 綁定菜單按鈕
   const xlsxBtn = document.getElementById('sapPopupXlsxBtn');
@@ -1002,7 +1002,7 @@ function bindSapMM17Events() {
 
   if (xlsxBtn) {
     xlsxBtn.addEventListener('click', () => {
-      console.log('📥 SAP MM17 XLSX 按鈕點擊');
+      console.log(' SAP MM17 XLSX 按鈕點擊');
       popup.style.display = 'none';
       exportSapMM17('xlsx');
     });
@@ -1017,12 +1017,12 @@ function bindSapMM17Events() {
       this.style.boxShadow = '0 4px 12px rgba(40, 167, 69, 0.3)';
     });
 
-    console.log('✅ XLSX 按鈕已綁定');
+    console.log(' XLSX 按鈕已綁定');
   }
 
   if (csvBtn) {
     csvBtn.addEventListener('click', () => {
-      console.log('📥 SAP MM17 CSV 按鈕點擊');
+      console.log(' SAP MM17 CSV 按鈕點擊');
       popup.style.display = 'none';
       exportSapMM17('csv');
     });
@@ -1037,13 +1037,13 @@ function bindSapMM17Events() {
       this.style.boxShadow = '0 4px 12px rgba(23, 162, 184, 0.3)';
     });
 
-    console.log('✅ CSV 按鈕已綁定');
+    console.log(' CSV 按鈕已綁定');
   }
 
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
       popup.style.display = 'none';
-      console.log('✅ 菜單已關閉');
+      console.log(' 菜單已關閉');
     });
 
     // 懸停效果
@@ -1054,7 +1054,7 @@ function bindSapMM17Events() {
       this.style.backgroundColor = 'transparent';
     });
 
-    console.log('✅ 取消按鈕已綁定');
+    console.log(' 取消按鈕已綁定');
   }
 
   // 點擊外部關閉
@@ -1063,7 +1063,7 @@ function bindSapMM17Events() {
         !popup.contains(e.target) &&
         e.target !== cleanSapBtn) {
       popup.style.display = 'none';
-      console.log('✅ 點擊外部關閉菜單');
+      console.log(' 點擊外部關閉菜單');
     }
   });
 
@@ -1071,11 +1071,11 @@ function bindSapMM17Events() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && popup.style.display === 'block') {
       popup.style.display = 'none';
-      console.log('✅ ESC 關閉菜單');
+      console.log(' ESC 關閉菜單');
     }
   });
 
-  console.log('🎉 SAP MM17 事件綁定完成（修復版）！');
+  console.log(' SAP MM17 事件綁定完成（修復版）！');
 }
 
 // ============================================================================
@@ -1112,19 +1112,19 @@ function initSearch() {
  * DOMContentLoaded 主初始化
  */
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('🚀 系統啟動 v4.3.4 (Z-scores 修復版)');
+  console.log(' 系統啟動 v4.3.4 (Z-scores 修復版)');
 
   // 初始化各項功能
   initFileUploads();
   initCalculationControls();
   initSearch();
 
-  console.log('✅ 主初始化完成');
+  console.log(' 主初始化完成');
 
-  // ✅ 綁定 SAP MM17 事件（DOMContentLoaded 已保證 DOM 就緒）
+  // 綁定 SAP MM17 事件（DOMContentLoaded 已保證 DOM 就緒）
   bindSapMM17Events();
 
-  console.log('✅ main.js v4.3.4 已載入 - Z-scores 修復版');
+  console.log(' main.js v4.3.4 已載入 - Z-scores 修復版');
 });
 
 // ============================================================================
@@ -1139,4 +1139,4 @@ window.exportSapMM17 = exportSapMM17;
 window.updateSapModeSelector = updateSapModeSelector;
 window.handleCalculationComplete = handleCalculationComplete;
 
-console.log('✅ 全域變數已導出');
+console.log(' 全域變數已導出');

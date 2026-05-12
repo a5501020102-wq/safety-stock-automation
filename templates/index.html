@@ -104,7 +104,7 @@
     <!-- Header -->
     <!-- ============================================ -->
     <header>
-      <div class="logo-icon">🧮</div>
+      <div class="logo-icon"></div>
       <h1>
         安全庫存自動化系統
         <span class="version">v4.3.1</span>
@@ -123,7 +123,7 @@
     <!-- ============================================ -->
     <div class="card">
       <div class="card-header">
-        <div class="card-icon">📁</div>
+        <div class="card-icon"></div>
         <span class="card-title">上傳資料檔案</span>
       </div>
 
@@ -132,7 +132,7 @@
         <div class="upload-card" id="salesUpload">
           <label>銷貨資料（主檔）<span class="required">*必要</span></label>
           <div class="upload-area">
-            <div class="upload-icon">📤</div>
+            <div class="upload-icon"></div>
             <div class="upload-text">銷貨明細 Excel</div>
             <div class="upload-hint">計算 SS 用</div>
           </div>
@@ -144,7 +144,7 @@
         <div class="upload-card" id="priceUpload">
           <label>單價對照表<span class="optional">選填</span></label>
           <div class="upload-area">
-            <div class="upload-icon">💰</div>
+            <div class="upload-icon"></div>
             <div class="upload-text">單價表 Excel</div>
             <div class="upload-hint">含: 料號, 單價</div>
           </div>
@@ -156,7 +156,7 @@
         <div class="upload-card" id="planUpload">
           <label>庫存計劃表<span class="optional">選填</span></label>
           <div class="upload-area">
-            <div class="upload-icon">📦</div>
+            <div class="upload-icon"></div>
             <div class="upload-text">ERP 庫存計劃</div>
             <div class="upload-hint">需求/供給/調撥</div>
           </div>
@@ -174,7 +174,7 @@
         <!-- 左側：計算策略 -->
         <div class="card">
           <div class="card-header">
-            <div class="card-icon">⚙️</div>
+            <div class="card-icon"></div>
             <span class="card-title">計算策略</span>
           </div>
 
@@ -186,7 +186,7 @@
                 <input type="radio" name="calcMode" value="compare" checked />
                 <span class="radio-marker"></span>
                 <div>
-                  <strong>📊 對比模式</strong>
+                  <strong> 對比模式</strong>
                   <div class="radio-hint">同時計算分倉和總倉，並排顯示對比結果（支援分頁、搜尋、匯出）</div>
                 </div>
               </label>
@@ -195,7 +195,7 @@
                 <input type="radio" name="calcMode" value="all" />
                 <span class="radio-marker"></span>
                 <div>
-                  <strong>📦 分倉計算</strong>
+                  <strong> 分倉計算</strong>
                   <div class="radio-hint">各出貨點獨立計算</div>
                 </div>
               </label>
@@ -204,7 +204,7 @@
                 <input type="radio" name="calcMode" value="total" />
                 <span class="radio-marker"></span>
                 <div>
-                  <strong>🏭 總倉合併</strong>
+                  <strong> 總倉合併</strong>
                   <div class="radio-hint">全部視為一倉計算</div>
                 </div>
               </label>
@@ -287,7 +287,7 @@
         <!-- 右側：月份選擇 -->
         <div class="card">
           <div class="card-header">
-            <div class="card-icon">📅</div>
+            <div class="card-icon"></div>
             <span class="card-title">計算範圍 (季節性過濾)</span>
           </div>
 
@@ -349,7 +349,7 @@
 
           <div style="margin-top: 1.5rem;">
             <button type="button" class="btn btn-primary" id="calculateBtn" style="width: 100%;">
-              🧮 開始計算
+               開始計算
             </button>
           </div>
         </div>
@@ -378,7 +378,7 @@
       <!-- 計算結果摘要（僅在非對比模式顯示） -->
       <div class="card" id="summaryCard">
         <div class="card-header">
-          <div class="card-icon">📈</div>
+          <div class="card-icon"></div>
           <span class="card-title">計算結果</span>
         </div>
 
@@ -406,7 +406,7 @@
         </div>
 
         <div id="maSummary" class="info-box" style="display:none;">
-          <strong>📈 移動平均已啟用</strong>：
+          <strong> 移動平均已啟用</strong>：
           窗口 <span id="maWindowDisplay">3</span> 個月，
           平均標準差降低 <span id="maAvgReduction">0</span>%
         </div>
@@ -417,7 +417,7 @@
         <div id="exportButtons">
           <!-- Excel 匯出按鈕 -->
           <button type="button" class="btn btn-primary" id="exportExcelBtn">
-            📥 匯出 Excel
+             匯出 Excel
           </button>
 
           <!-- SAP MM17 匯出按鈕（修復版 - 移除 Bootstrap dropdown 依賴）-->
@@ -427,7 +427,7 @@
 
           <!-- 重新計算按鈕 -->
           <button type="button" class="btn btn-secondary" id="resetBtn" style="margin-left:auto;">
-            🔄 重新計算
+             重新計算
           </button>
         </div>
 
@@ -441,13 +441,13 @@
           <div class="form-check form-check-inline">
             <input class="form-check-input" type="radio" name="sapExportMode" id="sapModeAll" value="all" checked>
             <label class="form-check-label" for="sapModeAll">
-              📦 分倉計算結果
+               分倉計算結果
             </label>
           </div>
           <div class="form-check form-check-inline">
             <input class="form-check-input" type="radio" name="sapExportMode" id="sapModeTotal" value="total">
             <label class="form-check-label" for="sapModeTotal">
-              🏭 總倉計算結果
+               總倉計算結果
             </label>
           </div>
         </div>
@@ -456,14 +456,14 @@
       <!-- 結果表格（僅在非對比模式顯示） -->
       <div class="card" id="resultsTableCard">
         <div class="card-header">
-          <div class="card-icon">📋</div>
+          <div class="card-icon"></div>
           <span class="card-title">詳細結果</span>
         </div>
 
         <div class="filter-row">
           <div class="filter-tabs" id="filterTabs"></div>
           <div class="search-box">
-            <input type="text" id="searchInput" placeholder="🔍 搜尋料號、品名..." />
+            <input type="text" id="searchInput" placeholder=" 搜尋料號、品名..." />
           </div>
         </div>
 

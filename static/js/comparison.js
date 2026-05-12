@@ -6,10 +6,10 @@
  * Author: 松鼠
  * Last Updated: 2026-01-27
  *
- * 🔧 v4.5.1 緊急修復：
- * - ✅ 修復出貨點篩選未生效問題
- * - ✅ Excel 和 SAP 匯出都支援出貨點篩選
- * - ✅ 增強參數驗證和錯誤提示
+ * v4.5.1 緊急修復：
+ * - 修復出貨點篩選未生效問題
+ * - Excel 和 SAP 匯出都支援出貨點篩選
+ * - 增強參數驗證和錯誤提示
  */
 
 (function () {
@@ -50,7 +50,7 @@
     }
 
     init() {
-      console.log("✅ Comparison View 已載入 (v4.5.1 - Site Filter Fix)");
+      console.log(" Comparison View 已載入 (v4.5.1 - Site Filter Fix)");
     }
 
     // =============================
@@ -58,7 +58,7 @@
     // =============================
 
     destroy() {
-      console.log("🧹 正在清理 ComparisonView...");
+      console.log(" 正在清理 ComparisonView...");
       this.unbindGlobalEvents();
 
       Object.keys(this.searchDebounceTimers).forEach((key) => {
@@ -76,7 +76,7 @@
         total: { currentPage: 1, pageSize: 20, filteredResults: [] },
       };
 
-      console.log("✅ ComparisonView 已清理完成");
+      console.log(" ComparisonView 已清理完成");
     }
 
     cleanupCharts() {
@@ -89,7 +89,7 @@
         if (div1) window.Plotly.purge(div1);
         if (div2) window.Plotly.purge(div2);
       } catch (error) {
-        console.warn("⚠️ 清理 Plotly 圖表時發生錯誤:", error);
+        console.warn(" 清理 Plotly 圖表時發生錯誤:", error);
       }
     }
 
@@ -229,12 +229,12 @@
 
         setTimeout(() => this.populateSiteSelector(), 0);
 
-        console.log("✅ 對比模式渲染完成", {
+        console.log(" 對比模式渲染完成", {
           all: this.pagination.all.filteredResults.length,
           total: this.pagination.total.filteredResults.length,
         });
       } catch (error) {
-        console.error("❌ 渲染失敗:", error);
+        console.error(" 渲染失敗:", error);
         this.showError(error.message || "未知錯誤，請重新計算");
 
         if (window.errorReporter) {
@@ -252,7 +252,7 @@
 
       return `
         <div class="section-header">
-          <div class="section-icon">📊</div>
+          <div class="section-icon"></div>
           <h2>對比分析：分倉 vs 總倉</h2>
         </div>
 
@@ -283,12 +283,12 @@
 
         <div class="comparison-grid">
           <div class="chart-container">
-            <div class="card-title">📊 安全庫存對比</div>
+            <div class="card-title"> 安全庫存對比</div>
             <div id="comparisonPlot1" style="width:100%; height:320px;"></div>
             <div id="comparisonChart1Fallback" class="text-muted" style="display:none; padding:8px;"></div>
           </div>
           <div class="chart-container">
-            <div class="card-title">💰 成本節省</div>
+            <div class="card-title"> 成本節省</div>
             <div id="comparisonPlot2" style="width:100%; height:320px;"></div>
             <div id="comparisonChart2Fallback" class="text-muted" style="display:none; padding:8px;"></div>
           </div>
@@ -307,7 +307,7 @@
     buildExportSection() {
       return `
         <div class="export-section">
-          <h3 class="export-title">📥 匯出資料</h3>
+          <h3 class="export-title"> 匯出資料</h3>
           <div class="export-controls">
             <div class="export-filter-group">
               <div class="export-filter">
@@ -336,10 +336,10 @@
 
             <div class="export-buttons">
               <button class="btn btn-primary" id="btnExportExcel" aria-label="匯出為 Excel XLSX 格式">
-                📊 匯出 Excel (.xlsx)
+                 匯出 Excel (.xlsx)
               </button>
               <button class="btn btn-secondary" id="btnExportSAP" aria-label="匯出為 SAP MM17 格式">
-                📋 匯出 SAP MM17
+                 匯出 SAP MM17
               </button>
             </div>
           </div>
@@ -360,11 +360,11 @@
       return `
         <div class="comparison-grid">
           <div>
-            <div class="card-title">📦 分倉計算詳情</div>
+            <div class="card-title"> 分倉計算詳情</div>
             <div class="table-search">
               <label for="searchAll" class="sr-only">搜尋分倉資料</label>
               <input type="text" class="form-control" id="searchAll"
-                     placeholder="🔍 搜尋 SKU、品名、出貨點..."
+                     placeholder=" 搜尋 SKU、品名、出貨點..."
                      autocomplete="off"
                      aria-label="搜尋分倉資料">
             </div>
@@ -373,11 +373,11 @@
           </div>
 
           <div>
-            <div class="card-title">🏭 總倉計算詳情</div>
+            <div class="card-title"> 總倉計算詳情</div>
             <div class="table-search">
               <label for="searchTotal" class="sr-only">搜尋總倉資料</label>
               <input type="text" class="form-control" id="searchTotal"
-                     placeholder="🔍 搜尋 SKU、品名..."
+                     placeholder=" 搜尋 SKU、品名..."
                      autocomplete="off"
                      aria-label="搜尋總倉資料">
             </div>
@@ -394,7 +394,7 @@
              role="dialog" aria-modal="true" aria-labelledby="detailModalTitle">
           <div class="detail-modal-content">
             <div class="detail-modal-header">
-              <h3 id="detailModalTitle">📦 SKU 詳細分析</h3>
+              <h3 id="detailModalTitle"> SKU 詳細分析</h3>
               <button class="modal-close" id="modalCloseBtn" aria-label="關閉詳情視窗">×</button>
             </div>
             <div class="detail-modal-body" id="detailModalBody"></div>
@@ -409,7 +409,7 @@
       if (!isFinite(savingsPercent) || savingsPercent < 5) {
         return `
           <div class="alert alert-warning" role="alert">
-            <strong>💡 策略建議：</strong>
+            <strong> 策略建議：</strong>
             分倉與總倉差異不大（節省 < 5%），建議維持現有分倉模式，或考慮採用混合策略。
           </div>
         `;
@@ -417,7 +417,7 @@
 
       return `
         <div class="alert alert-success" role="alert">
-          <strong>💡 策略建議：</strong>
+          <strong> 策略建議：</strong>
           分倉模式可節省 ${this.formatNumber(savingsPercent, 2)}% 的庫存，
           建議採用分倉配送策略以降低總庫存成本。
         </div>
@@ -436,7 +436,7 @@
       const paginationContainer = document.getElementById(paginationId);
 
       if (!tableContainer || !paginationContainer) {
-        console.warn(`⚠️ 找不到表格容器: ${tableId} 或 ${paginationId}`);
+        console.warn(` 找不到表格容器: ${tableId} 或 ${paginationId}`);
         return;
       }
 
@@ -510,7 +510,7 @@
                         data-mode="${mode}"
                         data-row-index="${filteredIndex}"
                         aria-label="查看 ${this.escapeHtml(row.sku)} 詳細資料">
-                  📋 詳情
+                   詳情
                 </button>
               </td>
             </tr>
@@ -705,7 +705,7 @@
       if (allResults.length > this.LARGE_DATASET_THRESHOLD) {
         const tableContainer = document.getElementById(mode === "all" ? "tableAll" : "tableTotal");
         if (tableContainer) {
-          tableContainer.innerHTML = '<p class="text-center" role="status">🔍 搜尋中...</p>';
+          tableContainer.innerHTML = '<p class="text-center" role="status"> 搜尋中...</p>';
         }
       }
 
@@ -842,11 +842,11 @@
       const statsText = document.getElementById("exportStatsText");
 
       try {
-        // ✅ 取得出貨點選擇器
+        // 取得出貨點選擇器
         const siteSelector = document.getElementById("exportSiteSelector");
         const selectedSite = siteSelector ? siteSelector.value : "all";
 
-        // ✅ 驗證是否有資料
+        // 驗證是否有資料
         if (!this.currentData) {
           throw new Error("請先執行計算");
         }
@@ -854,21 +854,21 @@
         // 顯示載入提示
         if (statsText) {
           const siteText = selectedSite === "all" ? "全部資料" : `出貨點 ${selectedSite}`;
-          statsText.textContent = `📥 正在匯出 ${siteText}，請稍候...`;
+          statsText.textContent = ` 正在匯出 ${siteText}，請稍候...`;
         }
 
         if (type === "excel") {
           // ===== Excel 匯出 =====
-          console.log("📊 呼叫後端 Excel API");
+          console.log(" 呼叫後端 Excel API");
           console.log(`   出貨點: ${selectedSite}`);
 
-          // ✅ 傳遞 site_filter 參數
+          // 傳遞 site_filter 參數
           await this.exportViaBackend("/api/export/excel", "POST", {
             site_filter: selectedSite !== "all" ? selectedSite : null,
           });
         } else if (type === "sap") {
           // ===== SAP MM17 匯出 =====
-          console.log("📋 呼叫後端 SAP MM17 API");
+          console.log(" 呼叫後端 SAP MM17 API");
 
           // 取得使用者選擇
           const formatSelector = document.getElementById("sapFormatSelector");
@@ -881,7 +881,7 @@
           console.log(`   模式: ${mode}`);
           console.log(`   出貨點: ${selectedSite}`);
 
-          // ✅ 傳遞 site_filter 參數
+          // 傳遞 site_filter 參數
           await this.exportViaBackend("/api/export/sap", "POST", {
             format: format,
             mode: mode,
@@ -895,9 +895,9 @@
           this.updateExportStats();
         }
       } catch (error) {
-        console.error("❌ 匯出失敗:", error);
+        console.error(" 匯出失敗:", error);
 
-        // ✅ 更友善的錯誤訊息
+        // 更友善的錯誤訊息
         let errorMsg = error.message || "未知錯誤";
         if (errorMsg.includes("沒有資料")) {
           errorMsg = `選擇的出貨點沒有資料，請確認篩選條件`;
@@ -919,9 +919,9 @@
      * @param {Object|null} body - 請求 body
      */
     async exportViaBackend(url, method = "POST", body = null) {
-      console.log(`📥 呼叫後端 API: ${url}`);
+      console.log(` 呼叫後端 API: ${url}`);
 
-      // ✅ 記錄傳遞的參數
+      // 記錄傳遞的參數
       if (body) {
         console.log(`   參數:`, body);
       }
@@ -980,7 +980,7 @@
         window.URL.revokeObjectURL(downloadUrl);
       }, 100);
 
-      console.log(`✅ 檔案下載成功: ${filename}`);
+      console.log(` 檔案下載成功: ${filename}`);
     }
 
     // =============================
@@ -992,7 +992,7 @@
       const rowIndex = parseInt(detailBtn.dataset.rowIndex, 10);
 
       if (!mode || !Number.isFinite(rowIndex)) {
-        console.warn("⚠️ detail btn missing dataset", { mode, rowIndex });
+        console.warn(" detail btn missing dataset", { mode, rowIndex });
         return;
       }
 
@@ -1104,7 +1104,7 @@
           this.renderChartsTextFallback(comp);
         }
       } catch (error) {
-        console.error("❌ 圖表渲染失敗，降級到文字顯示:", error);
+        console.error(" 圖表渲染失敗，降級到文字顯示:", error);
         this.renderChartsTextFallback(comp);
       }
     }
@@ -1167,7 +1167,7 @@
           if (fallback2) fallback2.style.display = "none";
         }
       } catch (error) {
-        console.error("❌ Plotly 渲染失敗:", error);
+        console.error(" Plotly 渲染失敗:", error);
         throw error;
       }
     }
@@ -1217,7 +1217,7 @@
 
     bindGlobalEvents() {
       if (this.eventsBound) {
-        console.warn("⚠️ 事件已綁定，跳過重複綁定");
+        console.warn(" 事件已綁定，跳過重複綁定");
         return;
       }
 
@@ -1297,7 +1297,7 @@
       document.addEventListener("keydown", this.boundHandlers.keydown);
 
       this.eventsBound = true;
-      console.log("✅ ComparisonView 全域事件已綁定");
+      console.log(" ComparisonView 全域事件已綁定");
     }
 
     unbindGlobalEvents() {
@@ -1316,7 +1316,7 @@
       };
 
       this.eventsBound = false;
-      console.log("✅ ComparisonView 事件已解除綁定");
+      console.log(" ComparisonView 事件已解除綁定");
     }
 
     // =============================
@@ -1342,7 +1342,7 @@
     }
 
     showError(message) {
-      alert("⚠️ " + message);
+      alert(" " + message);
     }
 
     formatNumber(value, decimals = 0) {
@@ -1371,5 +1371,5 @@
   // 模組輸出（單例）
   // =============================
   window.ComparisonView = new ComparisonView();
-  console.log("✅ Comparison View Module 已載入 (v4.5.1 - Site Filter Fix)");
+  console.log(" Comparison View Module 已載入 (v4.5.1 - Site Filter Fix)");
 })();s

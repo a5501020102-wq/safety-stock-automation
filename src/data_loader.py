@@ -12,16 +12,16 @@ Author: 松鼠
 Last Updated: 2026-01-28
 
 Key changes in v4.2.3:
-- ✅ 新增「出貨/退貨日期」→ date (關鍵修復！)
-- ✅ 新增「品名」→ name 的完整映射
-- ✅ 優化日誌輸出（顯示出貨點、資料範圍）
-- ✅ 更清楚的錯誤訊息
+- 新增「出貨/退貨日期」→ date (關鍵修復！)
+- 新增「品名」→ name 的完整映射
+- 優化日誌輸出（顯示出貨點、資料範圍）
+- 更清楚的錯誤訊息
 
 Previous changes (v4.2.1):
-- ✅ Sales/Price 都加入 fallback column aliases（當 config mapping 沒命中時）
-- ✅ Sales fallback log 補 missing_after，方便 debug
-- ✅ Date vectorized 兼容 Excel serial number（數字日期）
-- ✅ 更一致的欄位清洗（site/sku/quantity/price）
+- Sales/Price 都加入 fallback column aliases（當 config mapping 沒命中時）
+- Sales fallback log 補 missing_after，方便 debug
+- Date vectorized 兼容 Excel serial number（數字日期）
+- 更一致的欄位清洗（site/sku/quantity/price）
 """
 
 import logging
@@ -126,19 +126,19 @@ def _apply_fallback_aliases(
     rename_dict = {k: v for k, v in aliases.items() if k in df.columns}
     if rename_dict:
         df = df.rename(columns=rename_dict)
-        logger.info(f"✅ {context} fallback 映射: {rename_dict}")
+        logger.info(f" {context} fallback 映射: {rename_dict}")
 
     missing_after = set(required_cols) - set(df.columns)
 
     if missing_after:
         logger.warning(
-            f"⚠️ {context} 欄位驗證：\n"
+            f" {context} 欄位驗證：\n"
             f"   Config mapping 前缺少: {missing_before}\n"
             f"   Fallback mapping 後仍缺: {missing_after}\n"
             f"   目前欄位: {list(df.columns)}"
         )
     else:
-        logger.info(f"✅ {context} 所有必要欄位已就緒")
+        logger.info(f" {context} 所有必要欄位已就緒")
 
     return df
 
@@ -178,18 +178,18 @@ def load_sales_data(file_path: str | Path) -> SalesData:
     if not file_path.exists():
         raise FileNotFoundError(f"銷貨資料檔案不存在: {file_path}")
 
-    logger.info(f"📂 載入銷貨資料: {file_path.name}")
+    logger.info(f" 載入銷貨資料: {file_path.name}")
 
     try:
         # 讀取 Excel
         df = pd.read_excel(file_path)
-        logger.info(f"✅ 讀取成功: {len(df)} 列, {len(df.columns)} 欄")
-        logger.info(f"📋 原始欄位: {list(df.columns)}")
+        logger.info(f" 讀取成功: {len(df)} 列, {len(df.columns)} 欄")
+        logger.info(f" 原始欄位: {list(df.columns)}")
 
         # Step 1: 嘗試 config mapping
         mapper = ColumnMapper()
         df = mapper.map_columns(df)
-        logger.debug(f"📋 Config mapping 後: {list(df.columns)}")
+        logger.debug(f" Config mapping 後: {list(df.columns)}")
 
         # Step 2: Fallback aliases（銷貨）- v4.2.3 完整版
         required_cols = ["site", "sku", "date", "quantity"]
@@ -224,8 +224,8 @@ def load_sales_data(file_path: str | Path) -> SalesData:
             "銷貨數量": "quantity",
             "銷售數量": "quantity",
 
-            # 日期 - ✅ 關鍵修復！
-            "出貨/退貨日期": "date",  # ✅ 用戶的 Excel 格式
+            # 日期 - 關鍵修復！
+            "出貨/退貨日期": "date", # 用戶的 Excel 格式
             "出貨/交易日期": "date",
             "出貨/總受日期": "date",
             "讓貨日期": "date",
@@ -238,19 +238,19 @@ def load_sales_data(file_path: str | Path) -> SalesData:
         }
 
         df = _apply_fallback_aliases(df, required_cols, sales_aliases, context="銷貨資料")
-        logger.info(f"📋 Fallback mapping 後: {list(df.columns)}")
+        logger.info(f" Fallback mapping 後: {list(df.columns)}")
 
         # Step 3: Validate required columns
         missing_cols = set(required_cols) - set(df.columns)
         if missing_cols:
             raise DataLoadError(
-                f"❌ 缺少必要欄位: {missing_cols}\n"
-                f"📋 您的檔案欄位: {list(df.columns)}\n\n"
-                f"💡 提示：系統需要以下欄位（或類似名稱）：\n"
-                f"   ✅ 出貨點 (或: 倉庫、工廠、據點)\n"
-                f"   ✅ 料號 (或: 產品編號、物料編號、品號)\n"
-                f"   ✅ 數量 (或: 出貨數量、銷貨數量)\n"
-                f"   ✅ 日期 (或: 出貨/退貨日期、出貨日期)\n"
+                f" 缺少必要欄位: {missing_cols}\n"
+                f" 您的檔案欄位: {list(df.columns)}\n\n"
+                f" 提示：系統需要以下欄位（或類似名稱）：\n"
+                f" 出貨點 (或: 倉庫、工廠、據點)\n"
+                f" 料號 (或: 產品編號、物料編號、品號)\n"
+                f" 數量 (或: 出貨數量、銷貨數量)\n"
+                f" 日期 (或: 出貨/退貨日期、出貨日期)\n"
                 f"   (可選) 品名 (或: 產品名稱)"
             )
 
@@ -266,7 +266,7 @@ def load_sales_data(file_path: str | Path) -> SalesData:
 
         # Step 6: Get available sites
         available_sites = df["site"].unique().tolist()
-        logger.info(f"🏭 偵測到 {len(available_sites)} 個出貨點: {available_sites}")
+        logger.info(f" 偵測到 {len(available_sites)} 個出貨點: {available_sites}")
 
         # Step 7: Check optional columns
         has_stock_data = "stock" in df.columns
@@ -277,16 +277,16 @@ def load_sales_data(file_path: str | Path) -> SalesData:
 
         # Step 9: Log summary
         logger.info(
-            f"✅ 載入完成: {len(df)} 筆有效記錄 "
+            f" 載入完成: {len(df)} 筆有效記錄 "
             f"(跳過 {skipped_count} 筆無效日期)"
         )
 
         if len(df) > 0:
             date_range = f"{df['year_month'].min()} ~ {df['year_month'].max()}"
-            logger.info(f"📊 資料範圍: {date_range}")
-            logger.info(f"📦 SKU 數量: {df['sku'].nunique()} 個")
+            logger.info(f" 資料範圍: {date_range}")
+            logger.info(f" SKU 數量: {df['sku'].nunique()} 個")
             if max_date:
-                logger.info(f"📅 資料最大日期: {max_date.strftime('%Y-%m-%d')}")
+                logger.info(f" 資料最大日期: {max_date.strftime('%Y-%m-%d')}")
 
         # 提取可用的 ISO 週列表（供週模式選擇器使用）
         available_weeks: list[str] = []
@@ -305,7 +305,7 @@ def load_sales_data(file_path: str | Path) -> SalesData:
         )
 
     except Exception as e:
-        logger.error(f"❌ 載入銷貨資料失敗: {e}")
+        logger.error(f" 載入銷貨資料失敗: {e}")
         raise DataLoadError(f"載入銷貨資料失敗: {e}") from e
 
 
@@ -335,7 +335,7 @@ def _process_date_column_vectorized(df: pd.DataFrame) -> tuple[pd.DataFrame, int
                 # Keep whichever gives fewer NaT
                 if parsed2.isna().sum() < parsed.isna().sum():
                     parsed = parsed2
-                    logger.debug("✅ 日期欄位判定為 Excel serial number，已套用 origin+unit 解析")
+                    logger.debug(" 日期欄位判定為 Excel serial number，已套用 origin+unit 解析")
 
         # Extract max_date before converting to year_month
         max_date = None
@@ -358,11 +358,11 @@ def _process_date_column_vectorized(df: pd.DataFrame) -> tuple[pd.DataFrame, int
         skipped_count = int(df["year_month"].isna().sum())
         df = df[df["year_month"].notna()].copy()
 
-        logger.debug(f"✅ 向量化日期處理: {original_count} → {len(df)} 筆有效")
+        logger.debug(f" 向量化日期處理: {original_count} → {len(df)} 筆有效")
         return df, skipped_count, max_date
 
     except Exception as e:
-        logger.warning(f"⚠️ 向量化日期處理失敗，使用備用方案: {e}")
+        logger.warning(f" 向量化日期處理失敗，使用備用方案: {e}")
         return _process_date_column_fallback(df)
 
 
@@ -461,16 +461,16 @@ def load_price_data(file_path: str | Path) -> PriceData:
     if not file_path.exists():
         raise FileNotFoundError(f"單價資料檔案不存在: {file_path}")
 
-    logger.info(f"📂 載入單價資料: {file_path.name}")
+    logger.info(f" 載入單價資料: {file_path.name}")
 
     try:
         df = pd.read_excel(file_path)
-        logger.info(f"✅ 讀取成功: {len(df)} 列")
+        logger.info(f" 讀取成功: {len(df)} 列")
 
         mapper = ColumnMapper()
         df = mapper.map_columns(df)
 
-        # ✅ Fallback aliases（單價）
+        # Fallback aliases（單價）
         required_cols = ["sku", "price"]
         price_aliases = {
             "料號": "sku",
@@ -488,8 +488,8 @@ def load_price_data(file_path: str | Path) -> PriceData:
 
         if "sku" not in df.columns or "price" not in df.columns:
             raise DataLoadError(
-                f"❌ 單價資料缺少必要欄位 (sku, price)\n"
-                f"📋 可用欄位: {list(df.columns)}"
+                f" 單價資料缺少必要欄位 (sku, price)\n"
+                f" 可用欄位: {list(df.columns)}"
             )
 
         # Clean data
@@ -503,7 +503,7 @@ def load_price_data(file_path: str | Path) -> PriceData:
         # If duplicate SKUs, keep last
         price_map = dict(zip(df["sku"], df["price"], strict=True))
 
-        logger.info(f"✅ 載入完成: {len(price_map)} 個 SKU 價格")
+        logger.info(f" 載入完成: {len(price_map)} 個 SKU 價格")
 
         return PriceData(
             price_map=price_map,
@@ -511,7 +511,7 @@ def load_price_data(file_path: str | Path) -> PriceData:
         )
 
     except Exception as e:
-        logger.error(f"❌ 載入單價資料失敗: {e}")
+        logger.error(f" 載入單價資料失敗: {e}")
         raise DataLoadError(f"載入單價資料失敗: {e}") from e
 
 

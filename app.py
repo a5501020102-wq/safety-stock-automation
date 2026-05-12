@@ -27,6 +27,7 @@ Last Updated: 2026-04-15
 from __future__ import annotations
 
 import calendar
+import contextlib
 import io
 import logging
 import os
@@ -37,9 +38,8 @@ import traceback
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-import pandas as pd
 from flask import Flask, jsonify, render_template, request, send_file
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -85,7 +85,7 @@ try:
         load_price_data,
         load_sales_data,
     )
-    from src.error_codes import ErrorCode, error_response, make_error
+    from src.error_codes import ErrorCode, error_response
     from src.temp_manager import (
         ALLOWED_EXTENSIONS,
         cleanup_temp_files,
@@ -114,7 +114,7 @@ app.config["JSON_AS_ASCII"] = False  # keep Chinese readable in JSON
 DEBUG_MODE = os.environ.get("FLASK_ENV") == "development"
 
 # CORS: always allow localhost + any origins from ALLOWED_ORIGINS env var.
-_allowed_origins: List[str] = [
+_allowed_origins: list[str] = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
@@ -140,7 +140,7 @@ if MODULES_AVAILABLE:
 # Material Master (loaded once at startup from data/material_master.json)
 # ---------------------------------------------------------------------------
 
-_MATERIAL_MASTER: Dict[str, Any] = {}
+_MATERIAL_MASTER: dict[str, Any] = {}
 
 _master_path = Path(__file__).parent / "data" / "material_master.json"
 if _master_path.exists():
@@ -164,7 +164,7 @@ logger.info(f"Flask API initialized (v{API_VERSION}, debug={DEBUG_MODE})")
 # Helpers
 # ===========================================================================
 
-def _jsonify_success(payload: Dict[str, Any]) -> Any:
+def _jsonify_success(payload: dict[str, Any]) -> Any:
     """
     Build a success response with camelCase keys.
 
@@ -177,14 +177,14 @@ def _jsonify_success(payload: Dict[str, Any]) -> Any:
     return jsonify(keys_to_camel(payload))
 
 
-def _jsonify_error(code: str, message: str | None = None, **extra) -> Tuple[Any, int]:
+def _jsonify_error(code: str, message: str | None = None, **extra) -> tuple[Any, int]:
     """Build an error response (already snake_case keys, but code is kept uppercase)."""
     payload, status = error_response(code, message, **extra)
     # camelCase the `detail` field etc but keep error/code as-is
     return jsonify(payload), status
 
 
-def _validate_z_scores(z_scores: Any) -> Tuple[bool, str, Dict[str, float]]:
+def _validate_z_scores(z_scores: Any) -> tuple[bool, str, dict[str, float]]:
     """Validate the z_scores dict shape and numeric ranges."""
     defaults = {"A": 2.05, "B": 1.65, "C": 1.28}
 
@@ -193,7 +193,7 @@ def _validate_z_scores(z_scores: Any) -> Tuple[bool, str, Dict[str, float]]:
     if not isinstance(z_scores, dict):
         return False, "z_scores 必須是物件 {A, B, C}", defaults
 
-    cleaned: Dict[str, float] = {}
+    cleaned: dict[str, float] = {}
     for key in ("A", "B", "C"):
         raw = z_scores.get(key, defaults[key])
         try:
@@ -206,7 +206,7 @@ def _validate_z_scores(z_scores: Any) -> Tuple[bool, str, Dict[str, float]]:
     return True, "", cleaned
 
 
-def _validate_abc_thresholds(abc_thresholds: Any) -> Tuple[bool, str, Dict[str, float]]:
+def _validate_abc_thresholds(abc_thresholds: Any) -> tuple[bool, str, dict[str, float]]:
     """Validate ABC threshold dict."""
     defaults = {"A": 0.80, "B": 0.95}
 
@@ -215,7 +215,7 @@ def _validate_abc_thresholds(abc_thresholds: Any) -> Tuple[bool, str, Dict[str, 
     if not isinstance(abc_thresholds, dict):
         return False, "abc_thresholds 必須是物件 {A, B}", defaults
 
-    cleaned: Dict[str, float] = {}
+    cleaned: dict[str, float] = {}
     for key in ("A", "B"):
         raw = abc_thresholds.get(key, defaults[key])
         try:
@@ -230,14 +230,14 @@ def _validate_abc_thresholds(abc_thresholds: Any) -> Tuple[bool, str, Dict[str, 
     return True, "", cleaned
 
 
-def _filter_results_by_site(results: List[Any], site_filter: Optional[str]) -> List[Any]:
+def _filter_results_by_site(results: list[Any], site_filter: str | None) -> list[Any]:
     """Filter a list of CalculationResult-like objects by site attribute."""
     if not site_filter or site_filter == "all":
         return results
     return [r for r in results if getattr(r, "site", None) == site_filter]
 
 
-def _parse_year_month(ym: str) -> Tuple[int, int]:
+def _parse_year_month(ym: str) -> tuple[int, int]:
     """Parse 'YYYY-MM' -> (year, month). Returns (0, 0) on failure."""
     try:
         year, month = ym.split("-")
@@ -279,7 +279,7 @@ def material_groups():
         })
 
     cats = _MATERIAL_MASTER.get("categories", {})
-    slim_cats: Dict[str, Any] = {}
+    slim_cats: dict[str, Any] = {}
     for prefix, cat in cats.items():
         slim_cats[prefix] = {
             "name": cat["name"],
@@ -309,14 +309,14 @@ def legacy_ui():
 # Upload
 # ===========================================================================
 
-_FILE_LOADERS: Dict[str, Any] = {
+_FILE_LOADERS: dict[str, Any] = {
     "sales": None,  # populated lazily below
     "price": None,
     "plan": None,
 }
 
 
-def _get_file_loaders() -> Dict[str, Any]:
+def _get_file_loaders() -> dict[str, Any]:
     """Lazy init to avoid NameError when modules aren't available."""
     if MODULES_AVAILABLE and _FILE_LOADERS["sales"] is None:
         _FILE_LOADERS["sales"] = load_sales_data
@@ -331,7 +331,7 @@ def _build_upload_metadata(
     file_id: str,
     original_name: str,
     saved_path: Path,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Shape per-type metadata for the upload response."""
     try:
         size_bytes = saved_path.stat().st_size
@@ -441,12 +441,12 @@ def upload_file(file_type: str):
 # ===========================================================================
 
 def _build_parameters_snapshot(
-    body: Dict[str, Any],
+    body: dict[str, Any],
     options: Any,
     sales_data: Any,
-    filenames: Dict[str, Optional[str]],
+    filenames: dict[str, str | None],
     execution_time_ms: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Assemble the parameters snapshot for the frontend.
 
@@ -487,7 +487,7 @@ def _build_parameters_snapshot(
     }
 
 
-def _resolve_file(file_id: Optional[str], required_code: Optional[str] = None):
+def _resolve_file(file_id: str | None, required_code: str | None = None):
     """
     Resolve a file_id to a path. Returns (path, error_tuple).
 
@@ -560,7 +560,7 @@ def calculate():
     ):
         return _jsonify_error(ErrorCode.INVALID_PARAMS, "selected_months 必須是 1-12 的整數列表")
 
-    def _int_param(key_snake: str, key_camel: str, default: int, lo: int, hi: int) -> Tuple[int, Optional[Tuple]]:
+    def _int_param(key_snake: str, key_camel: str, default: int, lo: int, hi: int) -> tuple[int, tuple | None]:
         raw = params.get(key_snake) if params.get(key_snake) is not None else params.get(key_camel)
         if raw is None:
             return default, None
@@ -608,15 +608,11 @@ def calculate():
     date_from = None
     date_to = None
     if date_from_str:
-        try:
+        with contextlib.suppress(ValueError, AttributeError):
             date_from = datetime.strptime(date_from_str.replace("/", "-"), "%Y-%m-%d")
-        except (ValueError, AttributeError):
-            pass
     if date_to_str:
-        try:
+        with contextlib.suppress(ValueError, AttributeError):
             date_to = datetime.strptime(date_to_str.replace("/", "-"), "%Y-%m-%d")
-        except (ValueError, AttributeError):
-            pass
 
     trend_mode = params.get("trend_mode") or params.get("trendMode") or "none"
     if trend_mode not in ("short", "yoy", "none"):
@@ -692,8 +688,6 @@ def calculate():
                 working_days_per_month=working_days,
                 selected_weeks=selected_weeks,
             )
-            # For the parameter snapshot, derive options from the (all) summary
-            all_summary_obj = comparison_data["all"][2]
             # Reconstruct a light "options" object for snapshot building
             options_like = _OptionsSnapshot(
                 calc_mode=calc_mode,
@@ -794,7 +788,7 @@ class _OptionsSnapshot:
 # Export (Excel / SAP MM17) — stateless
 # ===========================================================================
 
-def _deserialize_results(payload: List[Dict[str, Any]]) -> List[Any]:
+def _deserialize_results(payload: list[dict[str, Any]]) -> list[Any]:
     """
     Convert the JSON result list back into lightweight objects that the
     export functions can treat as CalculationResult-like via getattr.
@@ -804,7 +798,7 @@ def _deserialize_results(payload: List[Dict[str, Any]]) -> List[Any]:
     """
     from types import SimpleNamespace
 
-    out: List[Any] = []
+    out: list[Any] = []
     for r in payload or []:
         # Convert nested structures if any (status/abcClass are primitives here)
         obj = SimpleNamespace(**{_snake(k): v for k, v in r.items()})
@@ -826,7 +820,7 @@ def _snake(s: str) -> str:
     return "".join(out)
 
 
-def _deserialize_summary(payload: Dict[str, Any]) -> Any:
+def _deserialize_summary(payload: dict[str, Any]) -> Any:
     """Convert summary JSON dict into a SimpleNamespace for export functions."""
     from types import SimpleNamespace
 
@@ -1001,9 +995,9 @@ def export_sap():
 # Moving Average detail — pure compute (stateless)
 # ===========================================================================
 
-def _group_by_quarter(monthly_data: Dict[str, float]) -> Dict[str, Dict[str, Any]]:
+def _group_by_quarter(monthly_data: dict[str, float]) -> dict[str, dict[str, Any]]:
     """Group monthly data into quarterly summary. Pure function, no deps."""
-    buckets: Dict[str, List[Tuple[str, float]]] = {}
+    buckets: dict[str, list[tuple[str, float]]] = {}
     for ym, value in sorted(monthly_data.items()):
         year, month = _parse_year_month(ym)
         if year == 0:
@@ -1019,7 +1013,7 @@ def _group_by_quarter(monthly_data: Dict[str, float]) -> Dict[str, Dict[str, Any
         key = f"{quarter} {year}"
         buckets.setdefault(key, []).append((ym, float(value)))
 
-    summary: Dict[str, Dict[str, Any]] = {}
+    summary: dict[str, dict[str, Any]] = {}
     for key, pairs in sorted(buckets.items()):
         values = [v for _, v in pairs]
         summary[key] = {
@@ -1032,7 +1026,7 @@ def _group_by_quarter(monthly_data: Dict[str, float]) -> Dict[str, Dict[str, Any
     return summary
 
 
-def _find_filled_months(monthly_data: Dict[str, float]) -> List[str]:
+def _find_filled_months(monthly_data: dict[str, float]) -> list[str]:
     """Return months between min and max that are missing from monthly_data."""
     sorted_months = sorted(monthly_data.keys())
     if not sorted_months:
@@ -1043,7 +1037,7 @@ def _find_filled_months(monthly_data: Dict[str, float]) -> List[str]:
     if start_year == 0 or end_year == 0:
         return []
 
-    expected: List[str] = []
+    expected: list[str] = []
     y, m = start_year, start_month
     guard = 0
     while (y, m) <= (end_year, end_month) and guard < 400:
@@ -1056,7 +1050,7 @@ def _find_filled_months(monthly_data: Dict[str, float]) -> List[str]:
     return [ym for ym in expected if ym not in monthly_data]
 
 
-def _ma_recommendation(std_dev: float, mean_demand: float) -> Dict[str, str]:
+def _ma_recommendation(std_dev: float, mean_demand: float) -> dict[str, str]:
     """Small heuristic recommendation text."""
     if std_dev <= 0:
         return {"text": "標準差為 0，無需移動平均", "level": "info"}
@@ -1091,7 +1085,7 @@ def ma_detail():
         return _jsonify_error(ErrorCode.MISSING_MONTHLY_VALUES)
 
     # Coerce to float values; drop bad entries
-    cleaned: Dict[str, float] = {}
+    cleaned: dict[str, float] = {}
     for k, v in monthly_data.items():
         try:
             cleaned[str(k)] = float(v)

@@ -76,7 +76,7 @@ class HistoryManager:
             # Save
             self._save_history(history)
 
-            logger.info(f"✓ 已儲存計算歷史 ({len(history)} 筆記錄)")
+            logger.info(f" 已儲存計算歷史 ({len(history)} 筆記錄)")
 
         except Exception as e:
             logger.warning(f"儲存歷史失敗: {e}")

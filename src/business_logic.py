@@ -6,25 +6,25 @@ Version: 4.3.4 (z_scores & abc_thresholds Support)
 Author: 松鼠
 Last Updated: 2026-01-29
 
-🔧 v4.3.4 功能增強：
-- ✅ calculate_comparison_mode() 支援 z_scores 和 abc_thresholds 參數
-- ✅ 參數驗證和預設值處理
-- ✅ 向後兼容（沒有參數時使用預設值）
-- ✅ 增強日誌輸出
-- ✅ 優化錯誤處理
+ v4.3.4 功能增強：
+- calculate_comparison_mode() 支援 z_scores 和 abc_thresholds 參數
+- 參數驗證和預設值處理
+- 向後兼容（沒有參數時使用預設值）
+- 增強日誌輸出
+- 優化錯誤處理
 
 更新 v4.3.1：
-- ✅ 添加 SAP MM17 匯出功能（XLSX 和 CSV）
-- ✅ 添加對比模式完整 Excel 匯出
-- ✅ 優化代碼結構和錯誤處理
-- ✅ 增強日誌輸出
+- 添加 SAP MM17 匯出功能（XLSX 和 CSV）
+- 添加對比模式完整 Excel 匯出
+- 優化代碼結構和錯誤處理
+- 增強日誌輸出
 
 重點修復 v4.2.3：
-- 🔴 修復 CV 欄位映射錯誤：coefficient_of_variation → cv
-- 🟡 修復 reorder_point 和 max_inventory：先讀取後端，沒有才計算
-- 🟡 添加 import math 支援
-- 🟢 優化重複的安全轉換
-- 🟢 添加調試日誌
+- 修復 CV 欄位映射錯誤：coefficient_of_variation → cv
+- 修復 reorder_point 和 max_inventory：先讀取後端，沒有才計算
+- 添加 import math 支援
+- 優化重複的安全轉換
+- 添加調試日誌
 """
 
 from __future__ import annotations
@@ -167,8 +167,8 @@ def calculate_comparison_mode(
         enable_outlier: 啟用離群值檢測
         enable_ma: 啟用移動平均
         ma_window: 移動平均窗口
-        z_scores: 服務水準設定（可選）✅ v4.3.4
-        abc_thresholds: ABC 分類門檻（可選）✅ v4.3.4
+        z_scores: 服務水準設定（可選） v4.3.4
+        abc_thresholds: ABC 分類門檻（可選） v4.3.4
 
     Returns:
         {
@@ -178,7 +178,7 @@ def calculate_comparison_mode(
         }
     """
     # ========================================
-    # ✅ v4.3.4: 參數預設值處理
+    # v4.3.4: 參數預設值處理
     # ========================================
     if z_scores is None:
         z_scores = {"A": 2.05, "B": 1.65, "C": 1.28}
@@ -207,7 +207,7 @@ def calculate_comparison_mode(
     # ========================================
     # 執行計算
     # ========================================
-    logger.info("📊 對比模式計算開始")
+    logger.info(" 對比模式計算開始")
     logger.info(f"   服務水準: A={z_scores['A']:.2f}, B={z_scores['B']:.2f}, C={z_scores['C']:.2f}")
     logger.info(f"   ABC門檻: A={abc_thresholds['A']:.0%}, B={abc_thresholds['B']:.0%}")
 
@@ -240,7 +240,7 @@ def calculate_comparison_mode(
             working_days_per_month=working_days_per_month,
             selected_weeks=selected_weeks,
         )
-        logger.info(f"   ✅ 分倉計算完成: {len(results_all)} 筆")
+        logger.info(f" 分倉計算完成: {len(results_all)} 筆")
 
         # ========================================
         # 總倉模式
@@ -270,10 +270,10 @@ def calculate_comparison_mode(
             working_days_per_month=working_days_per_month,
             selected_weeks=selected_weeks,
         )
-        logger.info(f"   ✅ 總倉計算完成: {len(results_total)} 筆")
+        logger.info(f" 總倉計算完成: {len(results_total)} 筆")
 
     except Exception as e:
-        logger.exception(f"❌ 計算過程發生錯誤：{e}")
+        logger.exception(f" 計算過程發生錯誤：{e}")
         raise ValueError(f"計算失敗：{str(e)}") from e
 
     # ========================================
@@ -298,11 +298,11 @@ def calculate_comparison_mode(
     if total_value_all > 0:
         savings_value_pct = (cost_saved / total_value_all) * 100
 
-    logger.info("   ✅ 對比分析完成")
+    logger.info(" 對比分析完成")
     logger.info(f"      節省數量: {int(inventory_saved)} ({savings_pct:.2f}%)")
     logger.info(f"      節省金額: ${cost_saved:.2f} ({savings_value_pct:.2f}%)")
 
-    # ✅ 同時輸出兩套 key（避免前端字段不一致）
+    # 同時輸出兩套 key（避免前端字段不一致）
     comparison = {
         # --- 前端 comparison.js 常用（英文字段風格）---
         "total_all_safety_stock": int(total_ss_all),
@@ -515,16 +515,16 @@ def _generate_recommendation(result: Any) -> dict[str, str]:
     mean_demand = _safe_float(getattr(result, "mean_demand", 0), 0)
 
     if std_dev <= 0:
-        return {"icon": "ℹ️", "text": "標準差為 0，無需移動平均", "level": "info"}
+        return {"icon": "ℹ", "text": "標準差為 0，無需移動平均", "level": "info"}
 
     cv = _calc_cv(std_dev, mean_demand)
 
     if cv > 0.5:
-        return {"icon": "💡", "text": f"需求波動較大（CV={cv:.2f}），建議啟用移動平均平滑", "level": "warning"}
+        return {"icon": "", "text": f"需求波動較大（CV={cv:.2f}），建議啟用移動平均平滑", "level": "warning"}
     elif cv > 0.3:
-        return {"icon": "📊", "text": f"需求波動中等（CV={cv:.2f}），移動平均可能有幫助", "level": "info"}
+        return {"icon": "", "text": f"需求波動中等（CV={cv:.2f}），移動平均可能有幫助", "level": "info"}
     else:
-        return {"icon": "✅", "text": f"需求相對穩定（CV={cv:.2f}），移動平均效果有限", "level": "success"}
+        return {"icon": "", "text": f"需求相對穩定（CV={cv:.2f}），移動平均效果有限", "level": "success"}
 
 
 # ============================================================================
@@ -708,7 +708,7 @@ def export_to_sap_mm17(
     if not results:
         raise ValueError("無計算結果可匯出")
 
-    logger.info(f"📁 開始準備 SAP MM17 數據，格式: {format}")
+    logger.info(f" 開始準備 SAP MM17 數據，格式: {format}")
 
     # 準備 SAP MM17 數據
     sap_data = []
@@ -723,7 +723,7 @@ def export_to_sap_mm17(
 
         # 跳過無效數據
         if not matnr:
-            logger.warning(f"⚠️  跳過無料號的數據：site={werks}")
+            logger.warning(f" 跳過無料號的數據：site={werks}")
             continue
 
         sap_data.append({
@@ -735,7 +735,7 @@ def export_to_sap_mm17(
     if not sap_data:
         raise ValueError("無有效數據可匯出至 SAP MM17")
 
-    logger.info(f"✅ 準備完成：{len(sap_data)} 筆 SAP MM17 數據")
+    logger.info(f" 準備完成：{len(sap_data)} 筆 SAP MM17 數據")
 
     # 創建 DataFrame
     df = pd.DataFrame(sap_data)
@@ -753,7 +753,7 @@ def export_to_sap_mm17(
             encoding='utf-8-sig'  # 支援中文（如果有）
         )
         output.seek(0)
-        logger.info("✅ CSV 匯出成功")
+        logger.info(" CSV 匯出成功")
         return output.read()
 
     elif format == 'xlsx':
@@ -791,7 +791,7 @@ def export_to_sap_mm17(
                         worksheet.write(0, col_num, value, header_format)
 
             output.seek(0)
-            logger.info("✅ XLSX 匯出成功")
+            logger.info(" XLSX 匯出成功")
             return output.read()
 
         except ImportError as err:
@@ -828,7 +828,7 @@ def export_comparison_to_excel(
     results_all, excluded_all, summary_all = all_data
     results_total, excluded_total, summary_total = total_data
 
-    logger.info("📊 開始匯出對比模式 Excel")
+    logger.info(" 開始匯出對比模式 Excel")
     logger.info(f"   分倉數據: {len(results_all)} 筆")
     logger.info(f"   總倉數據: {len(results_total)} 筆")
 
@@ -911,21 +911,21 @@ def export_comparison_to_excel(
                 index=False
             )
 
-            logger.info("✅ Sheet 1: 對比摘要 - 完成")
+            logger.info(" Sheet 1: 對比摘要 - 完成")
 
             # ========================================
             # Sheet 2: 分倉計算
             # ========================================
             if results_all:
                 _write_results_sheet(writer, results_all, "分倉計算", granularity=granularity, is_weekly_daily=is_weekly_daily)
-                logger.info(f"✅ Sheet 2: 分倉計算 - {len(results_all)} 筆")
+                logger.info(f" Sheet 2: 分倉計算 - {len(results_all)} 筆")
 
             # ========================================
             # Sheet 3: 總倉計算
             # ========================================
             if results_total:
                 _write_results_sheet(writer, results_total, "總倉計算", granularity=granularity, is_weekly_daily=is_weekly_daily)
-                logger.info(f"✅ Sheet 3: 總倉計算 - {len(results_total)} 筆")
+                logger.info(f" Sheet 3: 總倉計算 - {len(results_total)} 筆")
 
             # ========================================
             # Sheet 4: 差異分析（重點）
@@ -982,9 +982,9 @@ def export_comparison_to_excel(
                     sheet_name="差異分析",
                     index=False
                 )
-                logger.info(f"✅ Sheet 4: 差異分析 - {len(diff_rows)} 筆（差異 > 5%）")
+                logger.info(f" Sheet 4: 差異分析 - {len(diff_rows)} 筆（差異 > 5%）")
             else:
-                logger.info("⚠️  Sheet 4: 差異分析 - 無顯著差異項目")
+                logger.info(" Sheet 4: 差異分析 - 無顯著差異項目")
 
             # ========================================
             # Sheet 5: 排除項目
@@ -992,14 +992,14 @@ def export_comparison_to_excel(
             if excluded_all or excluded_total:
                 all_excluded = list(excluded_all or []) + list(excluded_total or [])
                 _write_excluded_sheet(writer, all_excluded)
-                logger.info(f"✅ Sheet 5: 排除項目 - {len(all_excluded)} 筆")
+                logger.info(f" Sheet 5: 排除項目 - {len(all_excluded)} 筆")
 
         output.seek(0)
-        logger.info("🎉 對比模式 Excel 匯出完成")
+        logger.info(" 對比模式 Excel 匯出完成")
         return output.read()
 
     except Exception as e:
-        logger.exception(f"❌ 對比模式 Excel 匯出失敗：{e}")
+        logger.exception(f" 對比模式 Excel 匯出失敗：{e}")
         raise ValueError(f"無法匯出對比分析：{str(e)}") from e
 
 
@@ -1051,7 +1051,7 @@ def _serialize_summary(summary: Any) -> dict[str, Any]:
 
 def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
     """
-    ✅ v4.2.3 修復版本：正確讀取後端欄位 + 備用計算
+     v4.2.3 修復版本：正確讀取後端欄位 + 備用計算
 
     主要修復：
     1. CV 欄位映射：coefficient_of_variation → cv
@@ -1075,7 +1075,7 @@ def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
         std_dev = _safe_float(getattr(r, "std_dev", 0), 0)
         safety_stock = _safe_float(getattr(r, "safety_stock", 0), 0)
 
-        # ✅ CV resolution via shared helper
+        # CV resolution via shared helper
         cv = _resolve_cv(r)
 
         # === 月數 ===
@@ -1088,7 +1088,7 @@ def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
             30
         )
 
-        # 🟡 FIX #2: reorder_point - 先讀取後端計算值，沒有才主動計算
+        # FIX #2: reorder_point - 先讀取後端計算值，沒有才主動計算
         reorder_point = getattr(r, "reorder_point", None)
         if reorder_point is None or _safe_float(reorder_point, 0) == 0:
             if mean_demand > 0 and lead_time_days > 0:
@@ -1103,7 +1103,7 @@ def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
             logger.debug(f"SKU {sku}: ROP 從後端讀取 = {reorder_point}")
         reorder_point = _safe_float(reorder_point, 0)
 
-        # 🟡 FIX #3: max_inventory - 先讀取後端計算值，沒有才主動計算
+        # FIX #3: max_inventory - 先讀取後端計算值，沒有才主動計算
         max_inventory = (
                 getattr(r, "max_inventory", None) or
                 getattr(r, "max_stock", None) or
