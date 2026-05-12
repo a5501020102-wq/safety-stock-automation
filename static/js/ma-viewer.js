@@ -7,12 +7,12 @@
  * Last Updated: 2026-01-26
  *
  * Fix/Improve:
- * - ✅ 防止重複插入 modal/style（腳本重載不會爆）
- * - ✅ show/hide 都 purge Plotly，避免越開越卡
- * - ✅ 取消 inline onclick，改事件綁定
- * - ✅ 支援 ESC 關閉 / 點背景關閉
- * - ✅ escapeHtml 防 XSS
- * - ✅ renderChart 防呆，不因資料缺失炸掉
+ * - 防止重複插入 modal/style（腳本重載不會爆）
+ * - show/hide 都 purge Plotly，避免越開越卡
+ * - 取消 inline onclick，改事件綁定
+ * - 支援 ESC 關閉 / 點背景關閉
+ * - escapeHtml 防 XSS
+ * - renderChart 防呆，不因資料缺失炸掉
  */
 
 (function () {
@@ -30,7 +30,7 @@
       this.createModal();
       this.addModalStyles();
       this.bindEvents();
-      console.log("✅ MA Viewer 已載入 (v4.2.2 - Hotfix+)");
+      console.log(" MA Viewer 已載入 (v4.2.2 - Hotfix+)");
     }
 
     // -----------------------------
@@ -219,7 +219,7 @@
 
       const content = document.getElementById("maDetailContent");
       if (!content) {
-        console.error("❌ MAViewer: missing #maDetailContent");
+        console.error(" MAViewer: missing #maDetailContent");
         return;
       }
 
@@ -227,14 +227,14 @@
       try {
         content.innerHTML = this.renderContent(data || {});
       } catch (e) {
-        console.error("❌ MAViewer.renderContent failed:", e);
+        console.error(" MAViewer.renderContent failed:", e);
         content.innerHTML = `<div class="alert alert-danger">內容渲染失敗，請檢查資料格式</div>`;
       }
 
       // 顯示 modal
       this.modal.style.display = "flex";
 
-      // ✅ 先清掉舊圖（避免重開疊圖/越來越卡）
+      // 先清掉舊圖（避免重開疊圖/越來越卡）
       this.purgePlotly();
 
       // 延遲渲染圖表（確保 DOM 已插入）
@@ -242,7 +242,7 @@
         try {
           this.renderChart(data || {});
         } catch (e) {
-          console.error("❌ MAViewer.renderChart failed:", e);
+          console.error(" MAViewer.renderChart failed:", e);
           const container = document.getElementById("maChartContainer");
           if (container) {
             container.innerHTML = `<div class="alert alert-warning">圖表渲染失敗（已忽略），請檢查資料格式或圖表庫載入狀態。</div>`;
@@ -324,7 +324,7 @@
       return `
         <div class="card">
           <div class="card-header">
-            <h6 class="card-title">📊 統計資訊</h6>
+            <h6 class="card-title"> 統計資訊</h6>
           </div>
           <div class="card-body">
             <div class="ma-info-grid">
@@ -371,7 +371,7 @@
       return `
         <div class="card ma-quarterly-table">
           <div class="card-header">
-            <h6 class="card-title">📅 季度趨勢</h6>
+            <h6 class="card-title"> 季度趨勢</h6>
           </div>
           <div class="card-body">
             <table class="table table-sm">
@@ -412,7 +412,7 @@
     renderRecommendation(rec) {
       const r = rec || {};
       const levelClass = r.level || "info";
-      const icon = r.icon || "💡";
+      const icon = r.icon || "";
       const text = this.escapeHtml(r.text ?? "");
       return `
         <div class="ma-recommendation ${this.escapeHtml(levelClass)}">
@@ -428,7 +428,7 @@
       const list = Array.isArray(months) ? months : [];
       return `
         <div class="alert alert-info mt-3">
-          <strong>📝 填補月份：</strong> ${list.map((m) => this.escapeHtml(this.formatYearMonth(m))).join(", ")}
+          <strong> 填補月份：</strong> ${list.map((m) => this.escapeHtml(this.formatYearMonth(m))).join(", ")}
         </div>
       `;
     }
@@ -583,6 +583,6 @@
   if (!window.MAViewer || !(window.MAViewer instanceof MAViewer)) {
     window.MAViewer = new MAViewer();
   } else {
-    console.warn("⚠️ MAViewer already exists, reuse existing instance");
+    console.warn(" MAViewer already exists, reuse existing instance");
   }
 })();
