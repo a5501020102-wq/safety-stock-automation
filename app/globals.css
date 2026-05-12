@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Design Tokens — Luxury / Editorial
+   ==========================================================================
+   Philosophy: elegance through restraint. Warm monochrome + gold accent,
+   high-contrast serif headings + humanist sans body, cinematic motion,
+   zero radius (architectural precision). No pure black or pure white.
+   ========================================================================== */
+
+@theme {
+  /* ---------- Color: Warm Alabaster base ---------- */
+  --color-background: #f9f8f6; /* Warm Alabaster — feels like paper */
+  --color-foreground: #1a1a1a; /* Rich Charcoal — never pure black  */
+  --color-muted: #ebe5de; /* Pale Taupe — subtle elevation     */
+  --color-muted-foreground: #6c6863; /* Warm Grey — secondary text        */
+  --color-accent: #c2a770; /* Antique Gold — refined, aged brass */
+  --color-accent-foreground: #ffffff;
+
+  /* ---------- Dividers & borders (use with opacity) ---------- */
+  --color-border: rgba(26, 26, 26, 0.15);
+  --color-border-strong: rgba(26, 26, 26, 0.3);
+
+  /* ---------- Status colors (softer, editorial palette) ---------- */
+  --color-shortage: #8b2635; /* Deep Burgundy — replaces raw red  */
+  --color-healthy: #3a5a40; /* Forest Green — replaces raw green */
+  --color-overstock: #8b7355; /* Warm Bronze — replaces raw blue   */
+  --color-neutral: #6c6863;
+
+  /* ---------- ABC grading ---------- */
+  --color-abc-a: #1a1a1a; /* Top tier = richest contrast */
+  --color-abc-b: #6c6863;
+  --color-abc-c: #a89888;
+
+  /* ---------- Typography (wired via next/font variables) ---------- */
+  --font-sans: var(--font-inter), var(--font-noto-sans-tc), -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+  --font-serif: var(--font-playfair), var(--font-noto-serif-tc), Georgia, serif;
+  --font-mono: var(--font-jetbrains-mono), "Cascadia Code", Consolas, monospace;
+
+  /* ---------- Letter spacing for editorial feel ---------- */
+  --tracking-luxury: 0.25em;
+  --tracking-button: 0.2em;
+  --tracking-label: 0.3em;
+
+  /* ---------- Shadows (subtle layered depth, never harsh) ---------- */
+  --shadow-luxury-xs: 0 2px 8px rgba(0, 0, 0, 0.02);
+  --shadow-luxury-sm: 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-luxury-md: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --shadow-luxury-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --shadow-luxury-inner: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+
+  /* ---------- Motion (cinematic timing) ---------- */
+  --ease-luxury: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* ==========================================================================
+   Strict radius override — force architectural sharpness project-wide.
+   Tailwind v4 lets us redeclare the radius scale here so every `rounded-*`
+   utility resolves to 0 (except .rounded-full for avatar-style circles).
+   ========================================================================== */
+@theme {
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius: 0px;
+  --radius-full: 9999px;
+}
+
+/* ==========================================================================
+   Base layer
+   ========================================================================== */
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "kern", "liga", "calt";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Selection: gold on charcoal */
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-foreground);
+  }
+
+  /* Scrollbar: hair-thin, editorial */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    transition: background 500ms var(--ease-luxury);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-border-strong);
+  }
+
+  /* Focus ring: thin charcoal, gold on interactive */
+  :focus-visible {
+    outline: 1px solid var(--color-foreground);
+    outline-offset: 2px;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 1px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* ==========================================================================
+   Keyframes (cinematic motion)
+   ========================================================================== */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes gold-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes grayscale-reveal {
+  from {
+    filter: grayscale(1);
+  }
+  to {
+    filter: grayscale(0);
+  }
+}
+
+/* ==========================================================================
+   Accessibility — respect user motion preferences
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
