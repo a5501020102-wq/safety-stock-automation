@@ -695,13 +695,7 @@ def calculate():
                 selected_weeks=selected_weeks,
             )
             # Reconstruct a light "options" object for snapshot building
-            # days_per_period 依粒度決定，月模式可被 workingDaysPerMonth 覆寫
-            if granularity_str == "monthly":
-                resolved_dpp = working_days if working_days else 30
-            elif granularity_str == "weekly":
-                resolved_dpp = 7
-            else:
-                resolved_dpp = 1
+            resolved_dpp = _resolve_days_per_period(granularity_str, working_days)
             options_like = _OptionsSnapshot(
                 calc_mode=calc_mode,
                 selected_months=selected_months,
@@ -757,6 +751,8 @@ def calculate():
                 selected_weeks=selected_weeks,
             )
 
+            # 與 compare 模式對稱：snapshot 也要記錄 days_per_period 和 selected_weeks
+            resolved_dpp_single = _resolve_days_per_period(granularity_str, working_days)
             options_like = _OptionsSnapshot(
                 calc_mode=calc_mode,
                 selected_months=selected_months,
@@ -768,6 +764,8 @@ def calculate():
                 enable_moving_average=enable_ma,
                 ma_window=ma_window,
                 granularity=granularity_str,
+                days_per_period=resolved_dpp_single,
+                selected_weeks=selected_weeks,
             )
             execution_ms = (time.perf_counter() - start_ts) * 1000
             snapshot = _build_parameters_snapshot(
@@ -797,6 +795,15 @@ class _OptionsSnapshot:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+
+def _resolve_days_per_period(granularity: str, working_days: int | None) -> int:
+    """依粒度決定 days_per_period。月模式可被 workingDaysPerMonth 覆寫。"""
+    if granularity == "weekly":
+        return 7
+    if granularity == "daily":
+        return 1
+    return working_days if working_days else 30
 
 
 # ===========================================================================
