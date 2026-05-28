@@ -78,6 +78,29 @@ MAD_TO_SIGMA_CONSTANT = 1.4826
 DEFAULT_OVERSTOCK_MULTIPLIER = 3
 MIN_RELIABLE_SAMPLE_SIZE = 3
 
+# Syntetos-Boylan 需求型態分類切點（業界標準值）
+# ADI (Average Demand Interval) = 期數 / 有需求期數
+# CV² = (非零期需求 std / mean)²
+ADI_THRESHOLD = 1.32
+CV2_THRESHOLD = 0.49
+
+
+def _classify_demand_pattern(adi: float, cv_squared: float) -> str:
+    """Syntetos-Boylan 四象限需求型態分類。
+
+    smooth (穩定):       頻繁且量穩 → 標準 SS 公式適用
+    erratic (波動):      頻繁但量波動大
+    intermittent (零星): 不常出但量穩
+    lumpy (雜亂):        不常出且量亂 → 最難預測
+    """
+    if adi < ADI_THRESHOLD and cv_squared < CV2_THRESHOLD:
+        return "smooth"
+    if adi < ADI_THRESHOLD and cv_squared >= CV2_THRESHOLD:
+        return "erratic"
+    if adi >= ADI_THRESHOLD and cv_squared < CV2_THRESHOLD:
+        return "intermittent"
+    return "lumpy"
+
 
 # ============================================================================
 # Data Classes (Calculator-specific)
@@ -182,6 +205,11 @@ class CalculationResult:
     # 週模式日數據統計
     data_point_count: int = 0
     data_point_warning: str | None = None
+
+    # 需求型態分類（Syntetos-Boylan，僅月粒度計算）
+    demand_pattern: str = "—"  # smooth / erratic / intermittent / lumpy / "—"
+    adi: float | None = None  # 平均需求間隔
+    cv_squared: float | None = None  # 非零期需求變異平方
 
 
 @dataclass
@@ -1147,6 +1175,21 @@ class SafetyStockCalculator:
                 period_values, options.trend_mode, options.selected_months, period_keys,
             )
 
+            # 需求型態分類（Syntetos-Boylan）—— 僅月粒度，用原始非零值（MAD/MA 前）
+            # ADI 分母：有明確 date range 時用「報告窗口期數」，否則用 SKU 首末區間
+            # （避免寬窗口下零星品被誤判為穩定品）
+            if options.date_from is not None and options.date_to is not None:
+                window_periods = self._count_window_periods(
+                    options.date_from, options.date_to,
+                    options.selected_months, options.max_date,
+                )
+                denom_periods = window_periods if window_periods > 0 else total_periods
+            else:
+                denom_periods = total_periods
+            demand_pattern, adi_val, cv2_val = self._compute_demand_pattern(
+                period_values, denom_periods, granularity, is_weekly_daily
+            )
+
             items.append({
                 **item,
                 "monthly_values": period_values,
@@ -1162,11 +1205,77 @@ class SafetyStockCalculator:
                 "outliers": outliers,
                 "outliers_removed": outliers_removed,
                 "has_insufficient_samples": final_n < options.min_confidence_samples,
+                "demand_pattern": demand_pattern,
+                "adi": adi_val,
+                "cv_squared": cv2_val,
                 "trend_pct": trend_pct,
                 "trend_label": trend_label,
             })
 
         return items
+
+    @staticmethod
+    def _count_window_periods(
+            date_from: datetime,
+            date_to: datetime,
+            selected_months: list[int],
+            max_date: datetime | None,
+    ) -> int:
+        """計算月報告窗口 [date_from, date_to] 內、月份屬 selected_months 的月數。
+
+        用於需求型態 ADI 分母：當使用者明確指定 date range 時，分母應反映
+        「使用者選的報告窗口」而非該 SKU 首末出貨區間（_fill_missing_periods
+        的 date range 只能縮小、不能放大 SKU 區間，會在寬窗口下讓零星品誤判為
+        穩定品）。尾端以 max_date 裁切，避免把未來空月算進分母。
+        """
+        end = date_to
+        if max_date is not None and max_date < end:
+            end = max_date
+        count = 0
+        current = datetime(date_from.year, date_from.month, 1)
+        end_marker = datetime(end.year, end.month, 1)
+        while current <= end_marker:
+            if current.month in selected_months:
+                count += 1
+            current = current + relativedelta(months=1)
+        return count
+
+    @staticmethod
+    def _compute_demand_pattern(
+            period_values: list[float],
+            denom_periods: int,
+            granularity: Granularity,
+            is_weekly_daily: bool,
+    ) -> tuple[str, float | None, float | None]:
+        """計算 Syntetos-Boylan 需求型態（僅月粒度）。
+
+        用原始非零期值（MAD/MA 之前）計算 CV²，與離線分析一致。
+        denom_periods 為 ADI 分母：呼叫端在有 date range 時傳「報告窗口期數」，
+        否則傳 total_periods（SKU 首末區間）。型態會隨使用者篩選範圍變動。
+
+        Returns:
+            (demand_pattern, adi, cv_squared)
+            非月粒度或樣本不足時回傳 ("—", None, None)
+        """
+        # 僅月粒度計算（週/日的 ADI 語意不同，本期不做）
+        if granularity != Granularity.MONTHLY or is_weekly_daily:
+            return "—", None, None
+
+        nonzero = [v for v in period_values if v > 0]
+        n_demand = len(nonzero)
+
+        # 需至少 2 個非零期才能算 CV²（std 需 n>=2），且分母不可為零
+        if n_demand < 2 or denom_periods <= 0:
+            return "—", None, None
+
+        adi = denom_periods / n_demand
+        mean_nz = sum(nonzero) / n_demand
+        if mean_nz <= 0:
+            return "—", None, None
+        variance_nz = sum((v - mean_nz) ** 2 for v in nonzero) / (n_demand - 1)
+        cv_squared = (math.sqrt(variance_nz) / mean_nz) ** 2
+
+        return _classify_demand_pattern(adi, cv_squared), adi, cv_squared
 
     @staticmethod
     def _compute_median(sorted_vals: list[float]) -> float:
@@ -1608,6 +1717,9 @@ class SafetyStockCalculator:
                 price=item["price"],
                 data_point_count=item.get("data_point_count", 0),
                 data_point_warning=item.get("data_point_warning"),
+                demand_pattern=item.get("demand_pattern", "—"),
+                adi=item.get("adi"),
+                cv_squared=item.get("cv_squared"),
             ))
 
         return results, excluded
