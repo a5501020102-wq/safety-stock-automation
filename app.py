@@ -477,7 +477,13 @@ def _build_parameters_snapshot(
         "ma_window": options.ma_window if options.enable_moving_average else None,
         "granularity": getattr(options, "granularity", "monthly"),
         "selected_weeks": getattr(options, "selected_weeks", None),
-        "working_days_per_month": options.days_per_period if getattr(options, "granularity", "monthly") == "monthly" else None,
+        # 月模式下 days_per_period 會被 workingDaysPerMonth 覆寫；其他粒度為 None
+        # 使用 getattr 防止 _OptionsSnapshot（compare mode）沒有此屬性時 AttributeError
+        "working_days_per_month": (
+            getattr(options, "days_per_period", None)
+            if getattr(options, "granularity", "monthly") == "monthly"
+            else None
+        ),
         "engine_version": API_VERSION,
         "sales_filename": filenames.get("sales"),
         "price_filename": filenames.get("price"),
@@ -689,6 +695,7 @@ def calculate():
                 selected_weeks=selected_weeks,
             )
             # Reconstruct a light "options" object for snapshot building
+            resolved_dpp = _resolve_days_per_period(granularity_str, working_days)
             options_like = _OptionsSnapshot(
                 calc_mode=calc_mode,
                 selected_months=selected_months,
@@ -700,6 +707,8 @@ def calculate():
                 enable_moving_average=enable_ma,
                 ma_window=ma_window,
                 granularity=granularity_str,
+                days_per_period=resolved_dpp,
+                selected_weeks=selected_weeks,
             )
             execution_ms = (time.perf_counter() - start_ts) * 1000
             snapshot = _build_parameters_snapshot(
@@ -742,6 +751,8 @@ def calculate():
                 selected_weeks=selected_weeks,
             )
 
+            # 與 compare 模式對稱：snapshot 也要記錄 days_per_period 和 selected_weeks
+            resolved_dpp_single = _resolve_days_per_period(granularity_str, working_days)
             options_like = _OptionsSnapshot(
                 calc_mode=calc_mode,
                 selected_months=selected_months,
@@ -753,6 +764,8 @@ def calculate():
                 enable_moving_average=enable_ma,
                 ma_window=ma_window,
                 granularity=granularity_str,
+                days_per_period=resolved_dpp_single,
+                selected_weeks=selected_weeks,
             )
             execution_ms = (time.perf_counter() - start_ts) * 1000
             snapshot = _build_parameters_snapshot(
@@ -782,6 +795,15 @@ class _OptionsSnapshot:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+
+def _resolve_days_per_period(granularity: str, working_days: int | None) -> int:
+    """依粒度決定 days_per_period。月模式可被 workingDaysPerMonth 覆寫。"""
+    if granularity == "weekly":
+        return 7
+    if granularity == "daily":
+        return 1
+    return working_days if working_days else 30
 
 
 # ===========================================================================
