@@ -580,6 +580,15 @@ def _period_labels(granularity: str = "monthly", is_weekly_daily: bool = False) 
     return "活躍月數", "月平均需求"
 
 
+# 需求型態英文值 → 中文顯示（Excel 匯出用）
+_DEMAND_PATTERN_ZH = {
+    "smooth": "穩定",
+    "erratic": "波動",
+    "intermittent": "零星",
+    "lumpy": "雜亂",
+}
+
+
 def _result_to_row(r: Any, granularity: str = "monthly", is_weekly_daily: bool = False) -> dict[str, Any]:
     """將單一 CalculationResult 轉為 Excel / 匯出用的 dict（共用邏輯）"""
     mean_demand = _safe_float(getattr(r, "mean_demand", 0), 0)
@@ -608,6 +617,7 @@ def _result_to_row(r: Any, granularity: str = "monthly", is_weekly_daily: bool =
         "周轉率": getattr(r, "turnover_rate", None) or "",
         "離群值數量": _safe_int(getattr(r, "outliers_removed", 0), 0),
         "單價": _safe_float(getattr(r, "price", 0), 0),
+        "需求型態": _DEMAND_PATTERN_ZH.get(getattr(r, "demand_pattern", "—"), "—"),
     }
 
 
@@ -1185,6 +1195,12 @@ def _serialize_results(results: list[Any]) -> list[dict[str, Any]]:
             "coverage_days": getattr(r, "coverage_days", None),
             "data_point_count": _safe_int(getattr(r, "data_point_count", 0), 0),
             "data_point_warning": getattr(r, "data_point_warning", None),
+
+            # 需求型態分類（Syntetos-Boylan，僅月粒度）
+            "demand_pattern": getattr(r, "demand_pattern", "—"),
+            "adi": getattr(r, "adi", None),
+            "cv_squared": getattr(r, "cv_squared", None),
+
             "monthly_plan": [
                 {
                     "month": mp.month,
