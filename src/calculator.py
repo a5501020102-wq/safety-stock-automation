@@ -1176,8 +1176,18 @@ class SafetyStockCalculator:
             )
 
             # 需求型態分類（Syntetos-Boylan）—— 僅月粒度，用原始非零值（MAD/MA 前）
+            # ADI 分母：有明確 date range 時用「報告窗口期數」，否則用 SKU 首末區間
+            # （避免寬窗口下零星品被誤判為穩定品）
+            if options.date_from is not None and options.date_to is not None:
+                window_periods = self._count_window_periods(
+                    options.date_from, options.date_to,
+                    options.selected_months, options.max_date,
+                )
+                denom_periods = window_periods if window_periods > 0 else total_periods
+            else:
+                denom_periods = total_periods
             demand_pattern, adi_val, cv2_val = self._compute_demand_pattern(
-                period_values, total_periods, granularity, is_weekly_daily
+                period_values, denom_periods, granularity, is_weekly_daily
             )
 
             items.append({
@@ -1205,17 +1215,43 @@ class SafetyStockCalculator:
         return items
 
     @staticmethod
+    def _count_window_periods(
+            date_from: datetime,
+            date_to: datetime,
+            selected_months: list[int],
+            max_date: datetime | None,
+    ) -> int:
+        """計算月報告窗口 [date_from, date_to] 內、月份屬 selected_months 的月數。
+
+        用於需求型態 ADI 分母：當使用者明確指定 date range 時，分母應反映
+        「使用者選的報告窗口」而非該 SKU 首末出貨區間（_fill_missing_periods
+        的 date range 只能縮小、不能放大 SKU 區間，會在寬窗口下讓零星品誤判為
+        穩定品）。尾端以 max_date 裁切，避免把未來空月算進分母。
+        """
+        end = date_to
+        if max_date is not None and max_date < end:
+            end = max_date
+        count = 0
+        current = datetime(date_from.year, date_from.month, 1)
+        end_marker = datetime(end.year, end.month, 1)
+        while current <= end_marker:
+            if current.month in selected_months:
+                count += 1
+            current = current + relativedelta(months=1)
+        return count
+
+    @staticmethod
     def _compute_demand_pattern(
             period_values: list[float],
-            total_periods: int,
+            denom_periods: int,
             granularity: Granularity,
             is_weekly_daily: bool,
     ) -> tuple[str, float | None, float | None]:
         """計算 Syntetos-Boylan 需求型態（僅月粒度）。
 
-        用原始非零期值（MAD/MA 之前）計算，與離線分析一致。
-        分母 total_periods 已含 selected_months / date_range 篩選，
-        故型態會隨使用者篩選範圍變動（這是刻意設計）。
+        用原始非零期值（MAD/MA 之前）計算 CV²，與離線分析一致。
+        denom_periods 為 ADI 分母：呼叫端在有 date range 時傳「報告窗口期數」，
+        否則傳 total_periods（SKU 首末區間）。型態會隨使用者篩選範圍變動。
 
         Returns:
             (demand_pattern, adi, cv_squared)
@@ -1229,10 +1265,10 @@ class SafetyStockCalculator:
         n_demand = len(nonzero)
 
         # 需至少 2 個非零期才能算 CV²（std 需 n>=2），且分母不可為零
-        if n_demand < 2 or total_periods <= 0:
+        if n_demand < 2 or denom_periods <= 0:
             return "—", None, None
 
-        adi = total_periods / n_demand
+        adi = denom_periods / n_demand
         mean_nz = sum(nonzero) / n_demand
         if mean_nz <= 0:
             return "—", None, None
