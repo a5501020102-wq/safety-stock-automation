@@ -46,7 +46,7 @@ from .models import (
     SalesData,
     StockStatus,
 )
-from .utils import calculate_order_deadline, create_composite_key
+from .utils import calculate_order_deadline
 
 # ============================================================================
 # Granularity Enum
@@ -680,121 +680,107 @@ class SafetyStockCalculator:
 
         logger.info(f" 驗證通過: {len(df)} 筆記錄")
 
-    @staticmethod
-    def _get_period_key(row: pd.Series, granularity: Granularity) -> str | None:
-        """Return the appropriate time-period key based on granularity."""
-        if granularity == Granularity.DAILY:
-            return row.get("date_str") or None
-        elif granularity == Granularity.WEEKLY:
-            return row.get("year_week") or None
-        else:
-            return row.get("year_month") or None
-
     def _aggregate_data(self, request: CalculationRequest) -> dict[str, dict[str, Any]]:
-        """Aggregate sales data by site+SKU, building period timelines."""
+        """Aggregate sales data by site+SKU, building period timelines.
+
+        以 pandas groupby 向量化取代逐列 iterrows（大檔效能關鍵：iterrows 曾佔
+        本函式約 90% 時間）。輸出結構與語義與舊版逐列實作完全一致。
+        """
         df = request.sales_data.df
         price_map = request.price_data or {}
         calc_mode = request.calc_mode
         target_site = request.target_site
         granularity = request.options.granularity
 
-        aggregated_data: dict[str, dict[str, Any]] = {}
-        skipped_rows = 0
+        # 依粒度選期間欄：日→date_str、週→year_week、其餘→year_month
+        period_col = {
+            Granularity.DAILY: "date_str",
+            Granularity.WEEKLY: "year_week",
+        }.get(granularity, "year_month")
 
-        for _, row in df.iterrows():
-            site = self._determine_site_from_row(row, calc_mode, target_site)
+        total_rows = len(df)
+        raw_site = df["site"].astype(str)
 
-            if site is None:
-                skipped_rows += 1
-                continue
+        cols: dict[str, Any] = {
+            "sku": df["sku"].astype(str).str.strip(),
+            "qty": pd.to_numeric(df["quantity"], errors="coerce"),
+            "name": df["name"].astype(str) if "name" in df.columns else "",
+            "period": df[period_col] if period_col in df.columns else None,
+            # site 依 calc_mode：total 全部歸「總倉」，single/all 用原出貨點
+            "site": "總倉" if calc_mode == "total" else raw_site,
+        }
+        if "price" in df.columns:
+            cols["row_price"] = pd.to_numeric(df["price"], errors="coerce")
+        if "stock" in df.columns:
+            cols["stock"] = df["stock"]
+        if "date_str" in df.columns:
+            cols["date_str"] = df["date_str"]
 
-            sku = str(row.get("sku", "")).strip()
-            if not sku:
-                skipped_rows += 1
-                continue
+        work = pd.DataFrame(cols)
 
-            period_key = self._get_period_key(row, granularity)
-            if not period_key:
-                skipped_rows += 1
-                continue
+        # single 模式：只留目標出貨點（被濾掉的列計入 skipped）
+        if calc_mode == "single" and target_site:
+            work = work[raw_site == target_site]
 
-            qty = float(row.get("quantity", 0))
+        # 過濾無效列：sku 非空、period 非空
+        valid = (
+            (work["sku"] != "")
+            & work["period"].notna()
+            & (work["period"].astype(str).str.strip() != "")
+        )
+        work = work[valid]
 
-            composite_key = create_composite_key(site, sku, KEY_DELIMITER)
-
-            if composite_key not in aggregated_data:
-                aggregated_data[composite_key] = self._initialize_aggregated_item(
-                    row, site, sku, price_map
-                )
-
-            timeline = aggregated_data[composite_key]["timeline"]
-            timeline[period_key] = timeline.get(period_key, 0.0) + qty
-
-            # 額外記錄日粒度資料（供週模式的日數據計算使用）
-            date_str = row.get("date_str")
-            if date_str:
-                daily_tl = aggregated_data[composite_key].setdefault("daily_timeline", {})
-                daily_tl[date_str] = daily_tl.get(date_str, 0.0) + qty
-
+        skipped_rows = total_rows - len(work)
         if skipped_rows > 0:
             logger.info(f"  ℹ 跳過 {skipped_rows} 筆無效資料")
 
-        for _comp_key, item in aggregated_data.items():
-            tl = item["timeline"]
-            for period_key in list(tl.keys()):
-                if tl[period_key] < 0:
-                    logger.warning(
-                        f"SKU {item.get('sku','')} @ {item.get('site','')} "
-                        f"期間 {period_key} 淨需求為負 ({tl[period_key]:.1f})，歸零處理"
-                    )
-                    tl[period_key] = 0.0
+        aggregated_data: dict[str, dict[str, Any]] = {}
+        if work.empty:
+            return aggregated_data
+
+        work = work.assign(composite=work["site"] + KEY_DELIMITER + work["sku"])
+
+        # metadata：每個 composite 取第一個存活列（對應舊版首次建立時 initialize 的時機）
+        has_price = "row_price" in work.columns
+        has_stock = "stock" in work.columns
+        for rec in work.drop_duplicates(subset="composite", keep="first").to_dict("records"):
+            sku = rec["sku"]
+            # 價格優先用 price_map，為 0 時退回該列 price（無 price 欄則維持 0）
+            price = price_map.get(sku, 0.0)
+            if price == 0.0 and has_price and pd.notna(rec["row_price"]):
+                price = float(rec["row_price"])
+            stock = rec["stock"] if (has_stock and pd.notna(rec["stock"])) else None
+            aggregated_data[rec["composite"]] = {
+                "site": rec["site"],
+                "sku": sku,
+                "name": rec["name"],
+                "price": price,
+                "stock": stock,
+                "timeline": {},
+            }
+
+        # timeline：(composite, period) 加總後負淨期歸零（退貨沖抵）
+        tl_sum = work.groupby(["composite", "period"], sort=False)["qty"].sum()
+        neg_count = int((tl_sum < 0).sum())
+        tl_sum = tl_sum.clip(lower=0)
+        for (composite, period), qty in tl_sum.items():
+            aggregated_data[composite]["timeline"][period] = float(qty)
+        if neg_count > 0:
+            # 彙總成單行，避免大檔逐期 WARNING 洗版（每條 log I/O 在 Render 上會累積）
+            logger.info(f"  ℹ {neg_count} 個負淨期已歸零處理（退貨沖抵）")
+
+        # daily_timeline：僅對有 date_str 的列建立，且不歸零負值（與舊版一致）
+        if "date_str" in work.columns:
+            daily = work[
+                work["date_str"].notna()
+                & (work["date_str"].astype(str).str.strip() != "")
+            ]
+            if not daily.empty:
+                d_sum = daily.groupby(["composite", "date_str"], sort=False)["qty"].sum()
+                for (composite, date_str), qty in d_sum.items():
+                    aggregated_data[composite].setdefault("daily_timeline", {})[date_str] = float(qty)
 
         return aggregated_data
-
-    def _determine_site_from_row(
-            self,
-            row: pd.Series,
-            calc_mode: str,
-            target_site: str | None,
-    ) -> str | None:
-        """Determine site identifier based on calculation mode."""
-        raw_site = str(row.get("site", "DEFAULT"))
-
-        if calc_mode == "total":
-            return "總倉"
-        elif calc_mode == "single":
-            if target_site and raw_site != target_site:
-                return None
-            return raw_site
-        else:  # calc_mode == "all"
-            return raw_site
-
-    def _initialize_aggregated_item(
-            self,
-            row: pd.Series,
-            site: str,
-            sku: str,
-            price_map: dict[str, float],
-    ) -> dict[str, Any]:
-        """Initialize a new aggregated item entry."""
-        price = price_map.get(sku, 0.0)
-        if price == 0.0:
-            try:
-                price = float(row.get("price", 0.0))
-            except (ValueError, TypeError):
-                price = 0.0
-
-        stock = row.get("stock")
-        stock = stock if pd.notna(stock) else None
-
-        return {
-            "site": site,
-            "sku": sku,
-            "name": str(row.get("name", "")),
-            "price": price,
-            "stock": stock,
-            "timeline": {},
-        }
 
     # ========================================================================
     # v4.2.0: 移動平均相關方法

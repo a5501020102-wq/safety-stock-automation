@@ -64,6 +64,9 @@ tests/fixtures/real_data/*
 !tests/fixtures/real_data/README.md
 tests/fixtures/sap_*.json
 
+# 本機驗算腳本（依賴上述 gitignore 的真實資料，無法在他處執行，僅本機用）
+tests/verify_all_modes.py
+
 # 舊版本和其他檔案
 web_app.py_v*.py
 main.py

@@ -6,7 +6,7 @@
 
 ## 專案概要 / Project
 
-- **後端**：Flask + Python 3.10（`safety-stock-automation/`，branch `feature/stateless-api`）
+- **後端**：Flask + Python 3.10（`safety-stock-automation/`，branch `main`）
 - **前端**：Next.js 16 + React 19 + TypeScript（`safety-stock-frontend/`，branch `main`）
 - **部署**：Vercel（前端）+ Render Free（後端）
 - **業務領域**：管材建材業採購安全庫存計算
