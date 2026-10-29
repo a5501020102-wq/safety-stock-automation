@@ -12,10 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.business_logic import calculate_comparison_mode, serialize_results_for_json
 from src.calculator import CalculationParams, Granularity, SafetyStockCalculator
+from src.comparison import calculate_comparison_mode
 from src.data_loader import DataLoadError, load_plan_data, load_price_data, load_sales_data
 from src.models import PlanData, SalesData
+from src.serialization import serialize_results_for_json
 
 logger = logging.getLogger(__name__)
 

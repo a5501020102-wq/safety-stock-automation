@@ -11,8 +11,9 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
-from src.business_logic import export_comparison_to_excel, export_to_excel, export_to_sap_mm17
 from src.error_codes import ErrorCode
+from src.exports.excel import export_comparison_to_excel, export_to_excel
+from src.exports.sap import export_to_sap_mm17
 
 XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 CSV_MIMETYPE = "text/csv; charset=utf-8"
