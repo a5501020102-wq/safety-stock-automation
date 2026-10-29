@@ -863,26 +863,3 @@ def _extract_mrp_month_data(
         transfer_out=transfer_out,
         independent_demand=independent_demand,
     )
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-def validate_file_format(file_path: Path, expected_format: str = "xlsx") -> bool:
-    """驗證檔案格式"""
-    return file_path.suffix.lower() == f".{expected_format}"
-
-
-def get_file_info(file_path: Path) -> dict[str, Any]:
-    """取得檔案資訊"""
-    if not file_path.exists():
-        return {}
-
-    stat = file_path.stat()
-    return {
-        "name": file_path.name,
-        "size_bytes": stat.st_size,
-        "size_mb": round(stat.st_size / (1024 * 1024), 2),
-        "modified": datetime.fromtimestamp(stat.st_mtime),
-    }
