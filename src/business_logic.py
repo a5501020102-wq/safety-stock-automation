@@ -51,7 +51,7 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         if v is None or v == "":
             return default
         return float(v)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -61,7 +61,7 @@ def _safe_int(v: Any, default: int = 0) -> int:
         if v is None or v == "":
             return default
         return int(v)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -76,10 +76,7 @@ def _get_enum_value(v: Any) -> Any:
     Enum -> .value
     其他 -> 原樣
     """
-    try:
-        return v.value
-    except Exception:
-        return v
+    return getattr(v, "value", v)
 
 
 def _calc_cv(std_dev: Any, mean_demand: Any) -> float:
@@ -160,18 +157,14 @@ def calculate_comparison_mode(
     logger.info(f"   服務水準: A={params.z_scores['A']:.2f}, B={params.z_scores['B']:.2f}, C={params.z_scores['C']:.2f}")
     logger.info(f"   ABC門檻: A={params.abc_thresholds['A']:.0%}, B={params.abc_thresholds['B']:.0%}")
 
-    try:
-        results_all, excluded_all, summary_all = calculator.calculate(
-            sales_data, price_data, plan_data, calc_mode="all", material_master=material_master, params=params,
-        )
-        logger.info(f" 分倉計算完成: {len(results_all)} 筆")
-        results_total, excluded_total, summary_total = calculator.calculate(
-            sales_data, price_data, plan_data, calc_mode="total", material_master=material_master, params=params,
-        )
-        logger.info(f" 總倉計算完成: {len(results_total)} 筆")
-    except Exception as e:
-        logger.exception(f" 計算過程發生錯誤：{e}")
-        raise ValueError(f"計算失敗：{str(e)}") from e
+    results_all, excluded_all, summary_all = calculator.calculate(
+        sales_data, price_data, plan_data, calc_mode="all", material_master=material_master, params=params,
+    )
+    logger.info(f" 分倉計算完成: {len(results_all)} 筆")
+    results_total, excluded_total, summary_total = calculator.calculate(
+        sales_data, price_data, plan_data, calc_mode="total", material_master=material_master, params=params,
+    )
+    logger.info(f" 總倉計算完成: {len(results_total)} 筆")
 
     # ========================================
     # 對比分析（安全計算）
@@ -268,9 +261,6 @@ def export_to_excel(results: list[Any], excluded: list[Any], summary: Any,
 
     except ImportError as err:
         raise ImportError("請安裝 xlsxwriter: pip install xlsxwriter") from err
-    except Exception as e:
-        logger.exception(f"Excel 匯出失敗：{e}")
-        raise ValueError(f"無法匯出 Excel：{str(e)}") from e
 
 
 def _period_labels(granularity: str = "monthly", is_weekly_daily: bool = False) -> tuple:
@@ -550,175 +540,171 @@ def export_comparison_to_excel(
     logger.info(f"   分倉數據: {len(results_all)} 筆")
     logger.info(f"   總倉數據: {len(results_total)} 筆")
 
-    try:
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
 
-            # ========================================
-            # Sheet 1: 對比摘要
-            # ========================================
-            # 計算參數資訊（放在摘要最前面）
-            param_items: list[str] = []
-            param_values: list[object] = []
+        # ========================================
+        # Sheet 1: 對比摘要
+        # ========================================
+        # 計算參數資訊（放在摘要最前面）
+        param_items: list[str] = []
+        param_values: list[object] = []
 
-            if calc_params:
-                gran_label = "Weekly (日數據)" if is_weekly_daily else granularity.capitalize()
-                param_items.append("計算模式")
-                param_values.append(calc_params.get("calc_mode", "compare").capitalize())
-                param_items.append("時間粒度")
-                param_values.append(gran_label)
+        if calc_params:
+            gran_label = "Weekly (日數據)" if is_weekly_daily else granularity.capitalize()
+            param_items.append("計算模式")
+            param_values.append(calc_params.get("calc_mode", "compare").capitalize())
+            param_items.append("時間粒度")
+            param_values.append(gran_label)
 
-                if is_weekly_daily:
-                    weeks = calc_params.get("selected_weeks", [])
-                    if weeks:
-                        param_items.append("分析範圍")
-                        param_values.append(f"{weeks[0]} ~ {weeks[-1]} ({len(weeks)} 週 / {len(weeks) * 7} 天)")
+            if is_weekly_daily:
+                weeks = calc_params.get("selected_weeks", [])
+                if weeks:
+                    param_items.append("分析範圍")
+                    param_values.append(f"{weeks[0]} ~ {weeks[-1]} ({len(weeks)} 週 / {len(weeks) * 7} 天)")
 
-                param_items.append("前置期")
-                lt = calc_params.get("lead_time_days") or calc_params.get("lead_time", 30)
-                param_values.append(f"{lt} 天")
+            param_items.append("前置期")
+            lt = calc_params.get("lead_time_days") or calc_params.get("lead_time", 30)
+            param_values.append(f"{lt} 天")
 
-                z = calc_params.get("z_scores", {})
-                if z:
-                    param_items.append("服務水準")
-                    param_values.append(f"A={z.get('A', '-')} / B={z.get('B', '-')} / C={z.get('C', '-')}")
+            z = calc_params.get("z_scores", {})
+            if z:
+                param_items.append("服務水準")
+                param_values.append(f"A={z.get('A', '-')} / B={z.get('B', '-')} / C={z.get('C', '-')}")
 
-                param_items.append("離群值偵測")
-                param_values.append("開啟" if calc_params.get("enable_outlier", True) else "關閉")
-                param_items.append("移動平均")
-                param_values.append("開啟" if calc_params.get("enable_ma", False) else "關閉")
+            param_items.append("離群值偵測")
+            param_values.append("開啟" if calc_params.get("enable_outlier", True) else "關閉")
+            param_items.append("移動平均")
+            param_values.append("開啟" if calc_params.get("enable_ma", False) else "關閉")
 
-                wdpm = calc_params.get("working_days_per_month")
-                if wdpm and granularity == "monthly":
-                    param_items.append("每月工作日")
-                    param_values.append(f"{wdpm} 天")
+            wdpm = calc_params.get("working_days_per_month")
+            if wdpm and granularity == "monthly":
+                param_items.append("每月工作日")
+                param_values.append(f"{wdpm} 天")
 
-                # 空行分隔
-                param_items.append("")
-                param_values.append("")
+            # 空行分隔
+            param_items.append("")
+            param_values.append("")
 
-            comparison_data = {
-                "項目": param_items + [
-                    "分倉總安全庫存",
-                    "總倉總安全庫存",
-                    "庫存差異",
-                    "優化潛力 (%)",
-                    "分倉總金額",
-                    "總倉總金額",
-                    "金額差異",
-                    "金額優化 (%)",
-                    "分倉 SKU 數量",
-                    "總倉 SKU 數量"
-                ],
-                "數值": param_values + [
-                    _safe_float(comparison.get("total_all_safety_stock", 0), 0),
-                    _safe_float(comparison.get("total_total_safety_stock", 0), 0),
-                    _safe_float(comparison.get("inventory_saved", 0), 0),
-                    _round(comparison.get("savings_percentage", 0), 2, 0),
-                    _safe_float(comparison.get("total_all_value", 0), 0),
-                    _safe_float(comparison.get("total_total_value", 0), 0),
-                    _safe_float(comparison.get("cost_saved", 0), 0),
-                    _round(comparison.get("savings_value_percentage", 0), 2, 0),
-                    comparison.get("all_sku_count", 0),
-                    comparison.get("total_sku_count", 0)
-                ]
-            }
+        comparison_data = {
+            "項目": param_items + [
+                "分倉總安全庫存",
+                "總倉總安全庫存",
+                "庫存差異",
+                "優化潛力 (%)",
+                "分倉總金額",
+                "總倉總金額",
+                "金額差異",
+                "金額優化 (%)",
+                "分倉 SKU 數量",
+                "總倉 SKU 數量"
+            ],
+            "數值": param_values + [
+                _safe_float(comparison.get("total_all_safety_stock", 0), 0),
+                _safe_float(comparison.get("total_total_safety_stock", 0), 0),
+                _safe_float(comparison.get("inventory_saved", 0), 0),
+                _round(comparison.get("savings_percentage", 0), 2, 0),
+                _safe_float(comparison.get("total_all_value", 0), 0),
+                _safe_float(comparison.get("total_total_value", 0), 0),
+                _safe_float(comparison.get("cost_saved", 0), 0),
+                _round(comparison.get("savings_value_percentage", 0), 2, 0),
+                comparison.get("all_sku_count", 0),
+                comparison.get("total_sku_count", 0)
+            ]
+        }
 
-            pd.DataFrame(comparison_data).to_excel(
+        pd.DataFrame(comparison_data).to_excel(
+            writer,
+            sheet_name="對比摘要",
+            index=False
+        )
+
+        logger.info(" Sheet 1: 對比摘要 - 完成")
+
+        # ========================================
+        # Sheet 2: 分倉計算
+        # ========================================
+        if results_all:
+            _write_results_sheet(writer, results_all, "分倉計算", granularity=granularity, is_weekly_daily=is_weekly_daily)
+            logger.info(f" Sheet 2: 分倉計算 - {len(results_all)} 筆")
+
+        # ========================================
+        # Sheet 3: 總倉計算
+        # ========================================
+        if results_total:
+            _write_results_sheet(writer, results_total, "總倉計算", granularity=granularity, is_weekly_daily=is_weekly_daily)
+            logger.info(f" Sheet 3: 總倉計算 - {len(results_total)} 筆")
+
+        # ========================================
+        # Sheet 4: 差異分析（重點）
+        # ========================================
+        diff_rows = []
+
+        # 建立 SKU 映射
+        total_map = {}
+        for r in results_total:
+            sku = getattr(r, "sku", "")
+            site = getattr(r, "site", "")
+            key = f"{site}_{sku}"
+            total_map[key] = r
+
+        for r_all in results_all:
+            sku = getattr(r_all, "sku", "")
+            site = getattr(r_all, "site", "")
+            key = f"{site}_{sku}"
+
+            # 找對應的總倉數據
+            r_total = total_map.get(key)
+            if not r_total:
+                continue
+
+            ss_all = _safe_float(getattr(r_all, "safety_stock", 0), 0)
+            ss_total = _safe_float(getattr(r_total, "safety_stock", 0), 0)
+
+            diff = ss_all - ss_total
+
+            # 計算差異百分比
+            diff_pct = 0
+            if ss_all > 0:
+                diff_pct = (diff / ss_all) * 100
+
+            # 只顯示差異 > 5% 的項目
+            if abs(diff_pct) < 5:
+                continue
+
+            diff_rows.append({
+                "出貨點": site,
+                "料號": sku,
+                "品名": getattr(r_all, "name", ""),
+                "ABC分類": _get_enum_value(getattr(r_all, "abc_class", "")),
+                "分倉安全庫存": int(round(ss_all)),
+                "總倉安全庫存": int(round(ss_total)),
+                "差異數量": int(round(diff)),
+                "差異百分比 (%)": _round(diff_pct, 2, 0),
+                "建議": "總倉" if diff > 0 else "分倉"
+            })
+
+        if diff_rows:
+            pd.DataFrame(diff_rows).to_excel(
                 writer,
-                sheet_name="對比摘要",
+                sheet_name="差異分析",
                 index=False
             )
+            logger.info(f" Sheet 4: 差異分析 - {len(diff_rows)} 筆（差異 > 5%）")
+        else:
+            logger.info(" Sheet 4: 差異分析 - 無顯著差異項目")
 
-            logger.info(" Sheet 1: 對比摘要 - 完成")
+        # ========================================
+        # Sheet 5: 排除項目
+        # ========================================
+        if excluded_all or excluded_total:
+            all_excluded = list(excluded_all or []) + list(excluded_total or [])
+            _write_excluded_sheet(writer, all_excluded)
+            logger.info(f" Sheet 5: 排除項目 - {len(all_excluded)} 筆")
 
-            # ========================================
-            # Sheet 2: 分倉計算
-            # ========================================
-            if results_all:
-                _write_results_sheet(writer, results_all, "分倉計算", granularity=granularity, is_weekly_daily=is_weekly_daily)
-                logger.info(f" Sheet 2: 分倉計算 - {len(results_all)} 筆")
+    output.seek(0)
+    logger.info(" 對比模式 Excel 匯出完成")
+    return output.read()
 
-            # ========================================
-            # Sheet 3: 總倉計算
-            # ========================================
-            if results_total:
-                _write_results_sheet(writer, results_total, "總倉計算", granularity=granularity, is_weekly_daily=is_weekly_daily)
-                logger.info(f" Sheet 3: 總倉計算 - {len(results_total)} 筆")
-
-            # ========================================
-            # Sheet 4: 差異分析（重點）
-            # ========================================
-            diff_rows = []
-
-            # 建立 SKU 映射
-            total_map = {}
-            for r in results_total:
-                sku = getattr(r, "sku", "")
-                site = getattr(r, "site", "")
-                key = f"{site}_{sku}"
-                total_map[key] = r
-
-            for r_all in results_all:
-                sku = getattr(r_all, "sku", "")
-                site = getattr(r_all, "site", "")
-                key = f"{site}_{sku}"
-
-                # 找對應的總倉數據
-                r_total = total_map.get(key)
-                if not r_total:
-                    continue
-
-                ss_all = _safe_float(getattr(r_all, "safety_stock", 0), 0)
-                ss_total = _safe_float(getattr(r_total, "safety_stock", 0), 0)
-
-                diff = ss_all - ss_total
-
-                # 計算差異百分比
-                diff_pct = 0
-                if ss_all > 0:
-                    diff_pct = (diff / ss_all) * 100
-
-                # 只顯示差異 > 5% 的項目
-                if abs(diff_pct) < 5:
-                    continue
-
-                diff_rows.append({
-                    "出貨點": site,
-                    "料號": sku,
-                    "品名": getattr(r_all, "name", ""),
-                    "ABC分類": _get_enum_value(getattr(r_all, "abc_class", "")),
-                    "分倉安全庫存": int(round(ss_all)),
-                    "總倉安全庫存": int(round(ss_total)),
-                    "差異數量": int(round(diff)),
-                    "差異百分比 (%)": _round(diff_pct, 2, 0),
-                    "建議": "總倉" if diff > 0 else "分倉"
-                })
-
-            if diff_rows:
-                pd.DataFrame(diff_rows).to_excel(
-                    writer,
-                    sheet_name="差異分析",
-                    index=False
-                )
-                logger.info(f" Sheet 4: 差異分析 - {len(diff_rows)} 筆（差異 > 5%）")
-            else:
-                logger.info(" Sheet 4: 差異分析 - 無顯著差異項目")
-
-            # ========================================
-            # Sheet 5: 排除項目
-            # ========================================
-            if excluded_all or excluded_total:
-                all_excluded = list(excluded_all or []) + list(excluded_total or [])
-                _write_excluded_sheet(writer, all_excluded)
-                logger.info(f" Sheet 5: 排除項目 - {len(all_excluded)} 筆")
-
-        output.seek(0)
-        logger.info(" 對比模式 Excel 匯出完成")
-        return output.read()
-
-    except Exception as e:
-        logger.exception(f" 對比模式 Excel 匯出失敗：{e}")
-        raise ValueError(f"無法匯出對比分析：{str(e)}") from e
 
 
 # _write_results_sheet_custom removed — consolidated into _write_results_sheet(sheet_name=...)

@@ -246,7 +246,7 @@ def load_sales_data(file_path: str | Path) -> SalesData:
             available_weeks=available_weeks,
         )
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - 解析邊界：pandas/openpyxl/xlrd 拋出的例外型別不固定，統一轉成 DataLoadError
         logger.error(f" 載入銷貨資料失敗: {e}")
         raise DataLoadError(f"載入銷貨資料失敗: {e}") from e
 
@@ -303,7 +303,7 @@ def _process_date_column_vectorized(df: pd.DataFrame) -> tuple[pd.DataFrame, int
         logger.debug(f" 向量化日期處理: {original_count} → {len(df)} 筆有效")
         return df, skipped_count, max_date
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - 向量化失敗時改走逐列備用方案，任何錯誤都應降級而非中斷
         logger.warning(f" 向量化日期處理失敗，使用備用方案: {e}")
         return _process_date_column_fallback(df)
 
@@ -347,7 +347,7 @@ def _process_date_column_fallback(df: pd.DataFrame) -> tuple[pd.DataFrame, int, 
             if max_date is None or dt > max_date:
                 max_date = dt
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - 單列日期無效只略過該列並計入 skipped_count
             logger.debug(f"第 {idx} 列日期格式無效: {date_val} ({e})")
             year_months.append(None)
             year_weeks.append(None)
@@ -449,7 +449,7 @@ def load_price_data(file_path: str | Path) -> PriceData:
             record_count=len(price_map),
         )
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - 解析邊界，同 load_sales_data
         logger.error(f" 載入單價資料失敗: {e}")
         raise DataLoadError(f"載入單價資料失敗: {e}") from e
 
@@ -559,7 +559,7 @@ def load_plan_data(file_path: str | Path) -> PlanData:
                 )
                 if item:
                     plan_data.add_item(item.site, item.sku, item)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - 單列格式錯誤只略過該列，不讓整份計畫載入失敗
                 logger.warning(f"解析計劃資料列失敗: {e}")
                 continue
 
@@ -568,7 +568,7 @@ def load_plan_data(file_path: str | Path) -> PlanData:
 
     except DataLoadError:
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - 解析邊界，同 load_sales_data
         logger.error(f"載入庫存計劃失敗: {e}")
         raise DataLoadError(f"載入庫存計劃失敗: {e}") from e
 
