@@ -36,26 +36,9 @@ from typing import Any
 
 import pandas as pd
 
+from .calculator import DEFAULT_ABC_THRESHOLDS, DEFAULT_Z_SCORES, SafetyStockCalculator
+
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# 導入模型（允許 fallback）
-# ============================================================================
-
-try:
-    from src.calculator import SafetyStockCalculator
-    from src.models import CalculationResult, CalculationSummary, ExcludedItem
-except ImportError:
-    try:
-        from calculator import SafetyStockCalculator
-        from models import CalculationResult, CalculationSummary, ExcludedItem
-    except ImportError as e:
-        logger.warning(f"無法導入模型（將使用 Any fallback）：{e}")
-        SafetyStockCalculator = Any
-        CalculationResult = Any
-        ExcludedItem = Any
-        CalculationSummary = Any
-
 
 # ============================================================================
 # 小工具：安全取值/格式化
@@ -181,13 +164,13 @@ def calculate_comparison_mode(
     # v4.3.4: 參數預設值處理
     # ========================================
     if z_scores is None:
-        z_scores = {"A": 2.05, "B": 1.65, "C": 1.28}
+        z_scores = dict(DEFAULT_Z_SCORES)
         logger.debug("z_scores 未提供，使用預設值")
     else:
         logger.debug(f"z_scores 已提供: {z_scores}")
 
     if abc_thresholds is None:
-        abc_thresholds = {"A": 0.80, "B": 0.95}
+        abc_thresholds = dict(DEFAULT_ABC_THRESHOLDS)
         logger.debug("abc_thresholds 未提供，使用預設值")
     else:
         logger.debug(f"abc_thresholds 已提供: {abc_thresholds}")

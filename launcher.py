@@ -27,7 +27,6 @@ def check_dependencies():
         'pandas': 'Pandas',
         'openpyxl': 'OpenPyXL',
         'xlsxwriter': 'XlsxWriter',
-        'yaml': 'PyYAML',
     }
 
     for module, name in required.items():
@@ -41,7 +40,7 @@ def check_dependencies():
     if missing:
         print("\n❌ 缺少依賴套件:")
         print("   " + ", ".join(missing))
-        print("\n請執行: pip install flask pandas openpyxl xlsxwriter pyyaml")
+        print("\n請執行: pip install -r requirements.txt")
         sys.exit(1)
 
     print("✅ 所有依賴已安裝\n")
@@ -51,8 +50,8 @@ def check_project_structure():
     """檢查專案結構"""
     print("🔍 檢查專案結構...")
 
-    required_dirs = ['src', 'config', 'templates', 'static', 'uploads']
-    required_files = ['app.py', 'config/config.yaml']
+    required_dirs = ['src', 'templates', 'static', 'uploads']
+    required_files = ['app.py']
 
     for directory in required_dirs:
         path = Path(directory)

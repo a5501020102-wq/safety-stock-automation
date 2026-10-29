@@ -38,7 +38,6 @@ from typing import Any
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
-from .config_loader import config
 from .models import (
     KEY_DELIMITER,
     ABCClass,
@@ -77,6 +76,11 @@ logger = logging.getLogger(__name__)
 MAD_TO_SIGMA_CONSTANT = 1.4826
 DEFAULT_OVERSTOCK_MULTIPLIER = 3
 MIN_RELIABLE_SAMPLE_SIZE = 3
+
+# 各 ABC 類別的服務水準 Z 值：A=2.05（約 98%）、B=1.65（約 95%）、C=1.28（約 90%）
+DEFAULT_Z_SCORES: dict[str, float] = {"A": 2.05, "B": 1.65, "C": 1.28}
+# ABC 分類累計占比門檻（有單價依金額、無單價依數量）：前 80% 為 A、80-95% 為 B、其餘為 C
+DEFAULT_ABC_THRESHOLDS: dict[str, float] = {"A": 0.80, "B": 0.95}
 
 # Syntetos-Boylan 需求型態分類切點（業界標準值）
 # ADI (Average Demand Interval) = 期數 / 有需求期數
@@ -260,8 +264,8 @@ class CalculationOptions:
     granularity: Granularity = Granularity.MONTHLY
 
     # Classification parameters
-    abc_thresholds: dict[str, float] = field(default_factory=lambda: {"A": 0.80, "B": 0.95})
-    z_scores: dict[str, float] = field(default_factory=lambda: {"A": 2.05, "B": 1.65, "C": 1.28})
+    abc_thresholds: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_ABC_THRESHOLDS))
+    z_scores: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_Z_SCORES))
 
     # Stock health parameters
     overstock_multiplier: int = DEFAULT_OVERSTOCK_MULTIPLIER
@@ -325,34 +329,8 @@ class SafetyStockCalculator:
     """Safety Stock Calculator with ABC classification and outlier detection."""
 
     def __init__(self):
-        """Initialize calculator with default parameters from config."""
-        calc_config = config._config.get('calculation', {})
-        outlier_config = config._config.get('outlier_detection', {})
-        stock_health_config = calc_config.get('stock_health', {})
-        ma_config = calc_config.get('moving_average', {})
-
-        # Load default parameters from config
-        self._default_options = CalculationOptions(
-            lead_time_days=calc_config.get("lead_time_days", 30),
-            days_per_period=Granularity.MONTHLY.days_per_period,
-            min_months=calc_config.get("min_months", 2),
-            granularity=Granularity.MONTHLY,
-            abc_thresholds=calc_config.get("abc_thresholds", {"A": 0.80, "B": 0.95}).copy(),
-            z_scores=calc_config.get("z_scores", {"A": 2.05, "B": 1.65, "C": 1.28}).copy(),
-            overstock_multiplier=stock_health_config.get(
-                "overstock_multiplier", DEFAULT_OVERSTOCK_MULTIPLIER
-            ),
-            enable_outlier_detection=outlier_config.get("enabled", True),
-            mad_constant=outlier_config.get("consistency_constant", MAD_TO_SIGMA_CONSTANT),
-            mad_multiplier=outlier_config.get("multiplier", 3),
-            min_sample_size=outlier_config.get("min_sample_size", 2),
-            enable_moving_average=ma_config.get("enabled", False),
-            ma_window=ma_config.get("window", 3),
-            ma_min_periods=ma_config.get("min_periods", 2),
-            ma_fill_missing=ma_config.get("fill_missing", True),
-            ma_fill_value=ma_config.get("fill_value", 0.0),
-            default_order_quantity=calc_config.get("default_order_quantity", 0),
-        )
+        """Initialize calculator; CalculationOptions 的欄位預設值即為系統預設參數。"""
+        self._default_options = CalculationOptions()
 
         logger.info("SafetyStockCalculator initialized (v4.3.4 - Z-scores & ABC Support)")
 

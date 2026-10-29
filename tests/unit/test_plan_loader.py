@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 
 from src.data_loader import (
-    _apply_fallback_aliases,
+    _apply_column_aliases,
     _extract_mrp_month_data,
     _normalize_string_col,
     _parse_mrp_columns,
@@ -274,7 +274,7 @@ class TestPlanFallbackAliases:
             "料號": "sku",
             "庫存數量": "current_stock",
         }
-        result = _apply_fallback_aliases(df, ["site", "sku", "current_stock"], aliases, "test")
+        result = _apply_column_aliases(df, ["site", "sku", "current_stock"], aliases, "test")
         assert "site" in result.columns
         assert "sku" in result.columns
         assert "current_stock" in result.columns
@@ -287,7 +287,7 @@ class TestPlanFallbackAliases:
             "current_stock": [500],
         })
         aliases = {"工廠": "site", "料號": "sku", "庫存數量": "current_stock"}
-        result = _apply_fallback_aliases(df, ["site", "sku", "current_stock"], aliases, "test")
+        result = _apply_column_aliases(df, ["site", "sku", "current_stock"], aliases, "test")
         assert list(result.columns) == ["site", "sku", "current_stock"]
 
     def test_partial_mapping(self):
@@ -298,7 +298,7 @@ class TestPlanFallbackAliases:
             "庫存數量": [500],
         })
         aliases = {"料號": "sku", "庫存數量": "current_stock"}
-        result = _apply_fallback_aliases(df, ["site", "sku", "current_stock"], aliases, "test")
+        result = _apply_column_aliases(df, ["site", "sku", "current_stock"], aliases, "test")
         assert "site" in result.columns
         assert "sku" in result.columns
         assert "current_stock" in result.columns

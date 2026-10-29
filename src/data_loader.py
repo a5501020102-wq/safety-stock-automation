@@ -3,8 +3,8 @@ Data loader for SS Automation.
 資料載入模組 - 處理 Excel 讀取、欄位對照與驗證
 
 This module handles loading and validation of input Excel files:
-- Sales data with automatic column mapping (+ fallback aliases)
-- Price data (+ fallback aliases)
+- Sales data with built-in column aliases
+- Price data (built-in column aliases)
 - Inventory plan data (v4.1.0)
 
 Version: 4.2.3 (支援出貨/退貨日期欄位)
@@ -29,11 +29,9 @@ import re
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
-from .config_loader import config
 from .models import (
     MonthlyPlanData,
     PlanData,
@@ -51,68 +49,17 @@ class DataLoadError(Exception):
 
 
 # =============================================================================
-# Column Mapping Helper
-# =============================================================================
-
-class ColumnMapper:
-    """
-    Handles flexible column name mapping from config.
-
-    v4.2.x: 兼容 column_mapping 和 column_aliases
-    """
-
-    def __init__(self):
-        self.mappings = config._config.get("column_mapping", {}) or config._config.get("column_aliases", {})
-
-        if not self.mappings:
-            logger.warning(
-                "配置檔案中未找到 column_mapping 或 column_aliases，將使用 fallback aliases"
-            )
-        else:
-            logger.debug(f"載入欄位對照: {len(self.mappings)} 個標準欄位")
-
-    def get_standard_name(self, user_column: str) -> str | None:
-        user_lower = user_column.lower().strip()
-
-        for standard_name, variants in self.mappings.items():
-            if isinstance(variants, list):
-                if user_lower in [str(v).lower().strip() for v in variants]:
-                    return standard_name
-            elif isinstance(variants, str):
-                if user_lower == variants.lower().strip():
-                    return standard_name
-
-        return None
-
-    def map_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        rename_dict: dict[Any, str] = {}
-
-        for col in df.columns:
-            standard = self.get_standard_name(str(col))
-            if standard:
-                rename_dict[col] = standard
-
-        if rename_dict:
-            df = df.rename(columns=rename_dict)
-            logger.debug(f"欄位對照成功: {rename_dict}")
-        else:
-            logger.debug("Config mapping 未命中任何欄位，將使用 fallback aliases")
-
-        return df
-
-
-# =============================================================================
 # Common Helpers
 # =============================================================================
 
-def _apply_fallback_aliases(
+def _apply_column_aliases(
         df: pd.DataFrame,
         required_cols: list[str],
         aliases: dict[str, str],
         context: str,
 ) -> pd.DataFrame:
     """
-    Apply built-in fallback aliases when config mapping didn't hit.
+    Rename columns to standard names using built-in aliases.
 
     - 只在 required_cols 缺欄位時才啟用
     - log 會印 missing_before / missing_after / columns
@@ -133,8 +80,8 @@ def _apply_fallback_aliases(
     if missing_after:
         logger.warning(
             f" {context} 欄位驗證：\n"
-            f"   Config mapping 前缺少: {missing_before}\n"
-            f"   Fallback mapping 後仍缺: {missing_after}\n"
+            f"   對照前缺少: {missing_before}\n"
+            f"   對照後仍缺: {missing_after}\n"
             f"   目前欄位: {list(df.columns)}"
         )
     else:
@@ -186,12 +133,7 @@ def load_sales_data(file_path: str | Path) -> SalesData:
         logger.info(f" 讀取成功: {len(df)} 列, {len(df.columns)} 欄")
         logger.info(f" 原始欄位: {list(df.columns)}")
 
-        # Step 1: 嘗試 config mapping
-        mapper = ColumnMapper()
-        df = mapper.map_columns(df)
-        logger.debug(f" Config mapping 後: {list(df.columns)}")
-
-        # Step 2: Fallback aliases（銷貨）- v4.2.3 完整版
+        # Step 1: 欄位別名（銷貨）- v4.2.3 完整版
         required_cols = ["site", "sku", "date", "quantity"]
         sales_aliases = {
             # 出貨點 / 倉庫
@@ -237,10 +179,10 @@ def load_sales_data(file_path: str | Path) -> SalesData:
             "日期": "date",
         }
 
-        df = _apply_fallback_aliases(df, required_cols, sales_aliases, context="銷貨資料")
-        logger.info(f" Fallback mapping 後: {list(df.columns)}")
+        df = _apply_column_aliases(df, required_cols, sales_aliases, context="銷貨資料")
+        logger.info(f" 欄位對照後: {list(df.columns)}")
 
-        # Step 3: Validate required columns
+        # Step 2: Validate required columns
         missing_cols = set(required_cols) - set(df.columns)
         if missing_cols:
             raise DataLoadError(
@@ -254,28 +196,28 @@ def load_sales_data(file_path: str | Path) -> SalesData:
                 f"   (可選) 品名 (或: 產品名稱)"
             )
 
-        # Step 4: Normalize string columns
+        # Step 3: Normalize string columns
         _normalize_string_col(df, "site")
         _normalize_string_col(df, "sku")
 
         if "name" in df.columns:
             _normalize_string_col(df, "name")
 
-        # Step 5: Process date column (vectorized)
+        # Step 4: Process date column (vectorized)
         df, skipped_count, max_date = _process_date_column_vectorized(df)
 
-        # Step 6: Get available sites
+        # Step 5: Get available sites
         available_sites = df["site"].unique().tolist()
         logger.info(f" 偵測到 {len(available_sites)} 個出貨點: {available_sites}")
 
-        # Step 7: Check optional columns
+        # Step 6: Check optional columns
         has_stock_data = "stock" in df.columns
         has_price_data = "price" in df.columns
 
-        # Step 8: Clean data
+        # Step 7: Clean data
         df = _clean_sales_data(df)
 
-        # Step 9: Log summary
+        # Step 8: Log summary
         logger.info(
             f" 載入完成: {len(df)} 筆有效記錄 "
             f"(跳過 {skipped_count} 筆無效日期)"
@@ -467,10 +409,7 @@ def load_price_data(file_path: str | Path) -> PriceData:
         df = pd.read_excel(file_path)
         logger.info(f" 讀取成功: {len(df)} 列")
 
-        mapper = ColumnMapper()
-        df = mapper.map_columns(df)
-
-        # Fallback aliases（單價）
+        # 欄位別名（單價）
         required_cols = ["sku", "price"]
         price_aliases = {
             "料號": "sku",
@@ -484,7 +423,7 @@ def load_price_data(file_path: str | Path) -> PriceData:
             "含稅單價": "price",
             "未稅單價": "price",
         }
-        df = _apply_fallback_aliases(df, required_cols, price_aliases, context="單價資料")
+        df = _apply_column_aliases(df, required_cols, price_aliases, context="單價資料")
 
         if "sku" not in df.columns or "price" not in df.columns:
             raise DataLoadError(
@@ -566,15 +505,11 @@ def load_plan_data(file_path: str | Path) -> PlanData:
     try:
         df = pd.read_excel(file_path)
 
-        # Step 1: Config-based mapping（優先）
-        mapper = ColumnMapper()
-        df = mapper.map_columns(df)
-
-        # Step 2: Fallback aliases（Config 未命中時啟用）
+        # Step 1: 欄位別名（庫存計畫）
         required_cols = ["site", "sku", "current_stock"]
-        df = _apply_fallback_aliases(df, required_cols, plan_aliases, "庫存計劃")
+        df = _apply_column_aliases(df, required_cols, plan_aliases, "庫存計劃")
 
-        # Step 3: 驗證必要欄位
+        # Step 2: 驗證必要欄位
         missing_cols = set(required_cols) - set(df.columns)
         if missing_cols:
             # 同時顯示中英文欄位名，方便使用者對照
@@ -588,7 +523,7 @@ def load_plan_data(file_path: str | Path) -> PlanData:
         _normalize_string_col(df, "site")
         _normalize_string_col(df, "sku")
 
-        # Step 4: 月份偵測（先嘗試 MRP 格式，fallback 到純 YYYYMM）
+        # Step 3: 月份偵測（先嘗試 MRP 格式，fallback 到純 YYYYMM）
         mrp_columns = _parse_mrp_columns(df.columns)
         if mrp_columns:
             detected_months = sorted(mrp_columns.keys())
@@ -603,7 +538,7 @@ def load_plan_data(file_path: str | Path) -> PlanData:
 
         has_cumulative = any(("累計" in str(col)) or ("cumulative" in str(col).lower()) for col in df.columns)
 
-        # Step 5: 推導時間戳
+        # Step 4: 推導時間戳
         planning_horizon = (
             f"{detected_months[0]}-{detected_months[-1]}"
             if detected_months else None
