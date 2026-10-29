@@ -86,17 +86,104 @@ def build_scenarios() -> dict[str, dict[str, Any]]:
     return scenarios
 
 
-def _upload(client: Any, file_type: str, path: Path) -> str:
+# ma-detail 是純函式，用固定輸入覆蓋：缺月補齊、跨年分季、無效值丟棄、三種變異程度
+MA_DETAIL_CASES: dict[str, dict[str, Any]] = {
+    "gap_and_cross_year": {
+        "site": "1002", "sku": "SKU-A", "name": "測試品", "abcClass": "A",
+        "monthlyData": {"2024-11": 10, "2024-12": 0, "2025-02": 25.5, "2025-04": 7},
+        "meanDemand": 10.6, "stdDev": 9.1, "totalQty": 42.5, "activeMonths": 3,
+        "outliersRemoved": 1, "maWindow": 3,
+    },
+    "drops_bad_values": {
+        "sku": "SKU-B", "monthlyData": {"2025-01": "abc", "2025-02": None, "2025-03": "4"},
+        "mean_demand": 4, "std_dev": 1.5, "ma_window": 6,
+    },
+    "zero_std": {"sku": "SKU-C", "monthlyData": {"2025-05": 3, "2025-06": 3}, "meanDemand": 3, "stdDev": 0},
+    "moderate_cv": {"sku": "SKU-D", "monthlyData": {"2025-07": 3}, "meanDemand": 10, "stdDev": 4},
+    "zero_mean": {"sku": "SKU-E", "monthlyData": {"2025-07": 3}, "meanDemand": 0, "stdDev": 4},
+    "missing_monthly": {"sku": "SKU-F", "monthlyData": {}},
+    "non_numeric_stats": {"sku": "SKU-G", "monthlyData": {"2025-01": 1}, "stdDev": "x"},
+}
+
+
+def _record(resp: Any) -> dict[str, Any]:
+    return {"status": resp.status_code, "body": resp.get_json(silent=True)}
+
+
+def _upload(client: Any, file_type: str, path: Path) -> Any:
     with path.open("rb") as fh:
-        resp = client.post(
+        return client.post(
             f"/api/upload/{file_type}",
             data={"file": (fh, path.name)},
             content_type="multipart/form-data",
         )
+
+
+def _upload_ok(client: Any, file_type: str, path: Path, out_dir: Path) -> str:
+    resp = _upload(client, file_type, path)
     body = resp.get_json()
     if resp.status_code != 200 or not body.get("success"):
         raise RuntimeError(f"上傳 {file_type} 失敗：{body}")
+    _write_json(out_dir / "api" / f"upload_{file_type}.json", _record(resp))
     return body["fileId"]
+
+
+def _upload_bytes(client: Any, url: str, filename: str, content: bytes) -> Any:
+    return client.post(url, data={"file": (io.BytesIO(content), filename)}, content_type="multipart/form-data")
+
+
+def _capture_api_surface(client: Any, sales_file_id: str, out_dir: Path) -> None:
+    """擷取計算以外的端點與錯誤回應，確保重構後狀態碼、錯誤碼與訊息不變。"""
+    base_params = {**BASE_PARAMS, "calcMode": "all", "granularity": "monthly"}
+    calc_cases: dict[str, dict[str, Any]] = {
+        "missing_sales_file": {"params": base_params},
+        "unknown_file_id": {"salesFileId": "00000000-0000-0000-0000-000000000000", "params": base_params},
+        "bad_calc_mode": {"salesFileId": sales_file_id, "params": {**base_params, "calcMode": "x"}},
+        "bad_z_type": {"salesFileId": sales_file_id, "params": {**base_params, "zScores": [1]}},
+        "bad_z_range": {"salesFileId": sales_file_id, "params": {**base_params, "zScores": {"A": 9}}},
+        "bad_z_value": {"salesFileId": sales_file_id, "params": {**base_params, "zScores": {"B": "x"}}},
+        "bad_abc_order": {"salesFileId": sales_file_id, "params": {**base_params, "abcThresholds": {"A": 0.9, "B": 0.8}}},
+        "bad_abc_range": {"salesFileId": sales_file_id, "params": {**base_params, "abcThresholds": {"A": 1.2}}},
+        "bad_months": {"salesFileId": sales_file_id, "params": {**base_params, "selectedMonths": [0, 13]}},
+        "bad_lead_time": {"salesFileId": sales_file_id, "params": {**base_params, "leadTime": 400}},
+        "bad_lead_time_type": {"salesFileId": sales_file_id, "params": {**base_params, "leadTime": "x"}},
+        "bad_min_months": {"salesFileId": sales_file_id, "params": {**base_params, "minMonths": 13}},
+        "bad_ma_window": {"salesFileId": sales_file_id, "params": {**base_params, "maWindow": 1}},
+        "bad_granularity": {"salesFileId": sales_file_id, "params": {**base_params, "granularity": "yearly"}},
+        # 以下無效值會被靜默忽略、回到預設值（既有行為）
+        "ignored_trend_mode": {"salesFileId": sales_file_id, "params": {**base_params, "trendMode": "x"}},
+        "ignored_working_days": {"salesFileId": sales_file_id, "params": {**base_params, "workingDaysPerMonth": 40}},
+        "ignored_bad_dates": {"salesFileId": sales_file_id, "params": {**base_params, "dateFrom": "abc", "dateTo": 5}},
+        "flat_snake_body": {"sales_file_id": sales_file_id, "calc_mode": "total", "lead_time": 45, "granularity": "monthly"},
+    }
+    records: dict[str, Any] = {
+        f"calculate_{name}": _record(client.post("/api/calculate", json=body))
+        for name, body in calc_cases.items()
+    }
+
+    records["index"] = _record(client.get("/"))
+    records["health"] = _record(client.get("/health"))
+    records["material_groups"] = _record(client.get("/api/material-groups"))
+    records["not_found"] = _record(client.get("/api/nope"))
+    records["method_not_allowed"] = _record(client.get("/api/calculate"))
+    records["legacy_status"] = {"status": client.get("/legacy").status_code}
+
+    records["upload_bad_type"] = _record(_upload_bytes(client, "/api/upload/foo", "a.xlsx", b"x"))
+    records["upload_no_file"] = _record(client.post("/api/upload/sales", data={}, content_type="multipart/form-data"))
+    records["upload_bad_ext"] = _record(_upload_bytes(client, "/api/upload/sales", "a.txt", b"x"))
+    records["upload_corrupt"] = _record(_upload_bytes(client, "/api/upload/sales", "a.xlsx", b"not excel"))
+
+    records["export_sap_bad_format"] = _record(client.post("/api/export/sap", json={"format": "pdf"}))
+    records["export_sap_no_site_rows"] = _record(client.post(
+        "/api/export/sap", json={"results": [{"site": "1002", "sku": "X"}], "siteFilter": "9999"}))
+    records["export_excel_no_site_rows"] = _record(client.post(
+        "/api/export/excel", json={"results": [{"site": "1002", "sku": "X"}], "siteFilter": "9999"}))
+
+    for name, body in MA_DETAIL_CASES.items():
+        records[f"ma_detail_{name}"] = _record(client.post("/api/ma-detail", json=body))
+
+    for name, record in records.items():
+        _write_json(out_dir / "api" / f"{name}.json", record)
 
 
 def _xlsx_to_values(data: bytes) -> dict[str, list[list[Any]]]:
@@ -133,13 +220,14 @@ def _export_bodies(calc_body: dict[str, Any], params: dict[str, Any]) -> dict[st
 def capture(sales: Path, price: Path | None, plan: Path | None, out_dir: Path) -> None:
     from app import app
 
-    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "api").mkdir(parents=True, exist_ok=True)
     client = app.test_client()
     file_ids = {
-        "salesFileId": _upload(client, "sales", sales),
-        "priceFileId": _upload(client, "price", price) if price else None,
-        "planFileId": _upload(client, "plan", plan) if plan else None,
+        "salesFileId": _upload_ok(client, "sales", sales, out_dir),
+        "priceFileId": _upload_ok(client, "price", price, out_dir) if price else None,
+        "planFileId": _upload_ok(client, "plan", plan, out_dir) if plan else None,
     }
+    _capture_api_surface(client, file_ids["salesFileId"], out_dir)
 
     for name, params in build_scenarios().items():
         resp = client.post("/api/calculate", json={**file_ids, "params": params})
