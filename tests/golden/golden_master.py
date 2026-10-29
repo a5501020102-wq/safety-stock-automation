@@ -34,6 +34,9 @@ VOLATILE_KEYS = frozenset({"executedAt", "executionTimeMs", "runDate", "uploaded
 TIMESTAMP_PATTERN = re.compile(r"\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}(:\d{2})?")
 TIMESTAMP_PLACEHOLDER = "<TIMESTAMP>"
 
+# 匯出檔名內的時間戳（例如 safety_stock_all_20261028_110533.xlsx）
+FILENAME_TIMESTAMP_PATTERN = re.compile(r"\d{8}_\d{6}")
+
 # 上傳暫存檔以 uuid4 命名（例如 parameters.salesFilename），每次上傳都不同
 UUID_PATTERN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 UUID_PLACEHOLDER = "<UUID>"
@@ -179,6 +182,21 @@ def _capture_api_surface(client: Any, sales_file_id: str, out_dir: Path) -> None
     records["export_excel_no_site_rows"] = _record(client.post(
         "/api/export/excel", json={"results": [{"site": "1002", "sku": "X"}], "siteFilter": "9999"}))
 
+    # 出貨點篩選會進入下載檔名，特殊字元必須被替換
+    site = "10 02/x"
+    site_rows = {"results": [{"site": site, "sku": "X", "safetyStock": 1}], "summary": {}}
+    site_exports = {
+        "excel_single": ("/api/export/excel", {**site_rows, "mode": "all", "siteFilter": site}),
+        "excel_compare": ("/api/export/excel", {
+            "mode": "compare", "siteFilter": site, "comparison": {},
+            "allSummary": site_rows, "totalSummary": site_rows,
+        }),
+        "sap_csv": ("/api/export/sap", {**site_rows, "mode": "total", "siteFilter": site, "format": "csv"}),
+    }
+    for name, (url, body) in site_exports.items():
+        resp = client.post(url, json=body)
+        records[f"export_site_{name}"] = {"status": resp.status_code, "headers": _export_headers(resp)}
+
     for name, body in MA_DETAIL_CASES.items():
         records[f"ma_detail_{name}"] = _record(client.post("/api/ma-detail", json=body))
 
@@ -239,6 +257,7 @@ def capture(sales: Path, price: Path | None, plan: Path | None, out_dir: Path) -
             print(f"[{name}] calculate HTTP {resp.status_code}：{calc_body.get('code')}")
             continue
 
+        headers: dict[str, dict[str, str]] = {}
         for filename, export_body in _export_bodies(calc_body, params).items():
             endpoint = "/api/export/excel" if filename.startswith("excel") else "/api/export/sap"
             export_resp = client.post(endpoint, json=export_body)
@@ -247,7 +266,15 @@ def capture(sales: Path, price: Path | None, plan: Path | None, out_dir: Path) -
                 print(f"[{name}] {filename} HTTP {export_resp.status_code}")
                 continue
             (scenario_dir / filename).write_bytes(export_resp.data)
+            headers[filename] = _export_headers(export_resp)
+        _write_json(scenario_dir / "export_headers.json", headers)
         print(f"[{name}] OK")
+
+
+def _export_headers(resp: Any) -> dict[str, str]:
+    """下載檔名與 MIME 類型也是前端依賴的 contract，時間戳遮蔽後一併比對。"""
+    disposition = FILENAME_TIMESTAMP_PATTERN.sub(TIMESTAMP_PLACEHOLDER, resp.headers.get("Content-Disposition", ""))
+    return {"Content-Type": resp.headers.get("Content-Type", ""), "Content-Disposition": disposition}
 
 
 def _write_json(path: Path, data: Any) -> None:
