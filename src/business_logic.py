@@ -31,12 +31,13 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import replace
 from io import BytesIO
 from typing import Any
 
 import pandas as pd
 
-from .calculator import DEFAULT_ABC_THRESHOLDS, DEFAULT_Z_SCORES, SafetyStockCalculator
+from .calculator import DEFAULT_ABC_THRESHOLDS, DEFAULT_Z_SCORES, CalculationParams, SafetyStockCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,21 @@ def _resolve_cv(r: Any) -> float:
     return _safe_float(cv, 0.0)
 
 
+def _resolve_comparison_params(params: CalculationParams) -> CalculationParams:
+    """補上對比模式需要的預設值，並驗證 selected_months。"""
+    selected_months = params.selected_months if params.selected_months is not None else list(range(1, 13))
+    if not isinstance(selected_months, list):
+        raise TypeError("selected_months 必須是列表")
+    if not all(isinstance(m, int) and 1 <= m <= 12 for m in selected_months):
+        raise ValueError("selected_months 必須包含 1-12 的月份（int）")
+    return replace(
+        params,
+        selected_months=selected_months,
+        z_scores=params.z_scores if params.z_scores is not None else dict(DEFAULT_Z_SCORES),
+        abc_thresholds=params.abc_thresholds if params.abc_thresholds is not None else dict(DEFAULT_ABC_THRESHOLDS),
+    )
+
+
 # ============================================================================
 # 對比模式計算（v4.3.4 增強版）
 # ============================================================================
@@ -115,43 +131,21 @@ def _resolve_cv(r: Any) -> float:
 def calculate_comparison_mode(
         calculator: SafetyStockCalculator,
         sales_data: Any,
+        params: CalculationParams,
         price_data: dict[str, float] | None = None,
         plan_data: Any | None = None,
-        selected_months: list[int] | None = None,
-        min_months: int = 2,
-        lead_time: int = 30,
-        enable_outlier: bool = True,
-        enable_ma: bool = False,
-        ma_window: int = 3,
-        z_scores: dict[str, float] | None = None,
-        abc_thresholds: dict[str, float] | None = None,
-        max_date: Any = None,
-        granularity: str = "monthly",
-        category_lead_times: dict[str, int] | None = None,
-        group_lead_times: dict[str, int] | None = None,
         material_master: dict[str, Any] | None = None,
-        date_from: Any = None,
-        date_to: Any = None,
-        trend_mode: str = "none",
-        working_days_per_month: int | None = None,
-        selected_weeks: list[str] | None = None,
 ) -> dict[str, Any]:
     """
-    對比模式：同時計算分倉(all)與總倉(total)
+    對比模式：以同一組參數分別計算分倉(all)與總倉(total)
 
     Args:
         calculator: 計算引擎實例
         sales_data: 銷貨資料
+        params: 計算參數（z_scores / abc_thresholds / selected_months 為 None 時使用預設值）
         price_data: 單價資料（可選）
         plan_data: 庫存計劃（可選）
-        selected_months: 選擇的月份
-        min_months: 最少月數
-        lead_time: 前置期（天）
-        enable_outlier: 啟用離群值檢測
-        enable_ma: 啟用移動平均
-        ma_window: 移動平均窗口
-        z_scores: 服務水準設定（可選） v4.3.4
-        abc_thresholds: ABC 分類門檻（可選） v4.3.4
+        material_master: 物料主檔（可選）
 
     Returns:
         {
@@ -160,101 +154,21 @@ def calculate_comparison_mode(
             "comparison": {各種對比指標}
         }
     """
-    # ========================================
-    # v4.3.4: 參數預設值處理
-    # ========================================
-    if z_scores is None:
-        z_scores = dict(DEFAULT_Z_SCORES)
-        logger.debug("z_scores 未提供，使用預設值")
-    else:
-        logger.debug(f"z_scores 已提供: {z_scores}")
+    params = _resolve_comparison_params(params)
 
-    if abc_thresholds is None:
-        abc_thresholds = dict(DEFAULT_ABC_THRESHOLDS)
-        logger.debug("abc_thresholds 未提供，使用預設值")
-    else:
-        logger.debug(f"abc_thresholds 已提供: {abc_thresholds}")
-
-    # ========================================
-    # 參數驗證
-    # ========================================
-    if selected_months is None:
-        selected_months = list(range(1, 13))
-
-    if not isinstance(selected_months, list):
-        raise TypeError("selected_months 必須是列表")
-
-    if not all(isinstance(m, int) and 1 <= m <= 12 for m in selected_months):
-        raise ValueError("selected_months 必須包含 1-12 的月份（int）")
-
-    # ========================================
-    # 執行計算
-    # ========================================
     logger.info(" 對比模式計算開始")
-    logger.info(f"   服務水準: A={z_scores['A']:.2f}, B={z_scores['B']:.2f}, C={z_scores['C']:.2f}")
-    logger.info(f"   ABC門檻: A={abc_thresholds['A']:.0%}, B={abc_thresholds['B']:.0%}")
+    logger.info(f"   服務水準: A={params.z_scores['A']:.2f}, B={params.z_scores['B']:.2f}, C={params.z_scores['C']:.2f}")
+    logger.info(f"   ABC門檻: A={params.abc_thresholds['A']:.0%}, B={params.abc_thresholds['B']:.0%}")
 
     try:
-        # ========================================
-        # 分倉模式
-        # ========================================
-        logger.info("   → 計算分倉模式...")
         results_all, excluded_all, summary_all = calculator.calculate(
-            sales_data=sales_data,
-            price_data=price_data,
-            plan_data=plan_data,
-            calc_mode='all',
-            selected_months=selected_months,
-            min_months=min_months,
-            lead_time_days=lead_time,
-            enable_outlier_detection=enable_outlier,
-            enable_moving_average=enable_ma,
-            ma_window=ma_window,
-            z_scores=z_scores,
-            abc_thresholds=abc_thresholds,
-            max_date=max_date,
-            granularity=granularity,
-            category_lead_times=category_lead_times,
-            group_lead_times=group_lead_times,
-            material_master=material_master,
-            date_from=date_from,
-            date_to=date_to,
-            trend_mode=trend_mode,
-            working_days_per_month=working_days_per_month,
-            selected_weeks=selected_weeks,
+            sales_data, price_data, plan_data, calc_mode="all", material_master=material_master, params=params,
         )
         logger.info(f" 分倉計算完成: {len(results_all)} 筆")
-
-        # ========================================
-        # 總倉模式
-        # ========================================
-        logger.info("   → 計算總倉模式...")
         results_total, excluded_total, summary_total = calculator.calculate(
-            sales_data=sales_data,
-            price_data=price_data,
-            plan_data=plan_data,
-            calc_mode='total',
-            selected_months=selected_months,
-            min_months=min_months,
-            lead_time_days=lead_time,
-            enable_outlier_detection=enable_outlier,
-            enable_moving_average=enable_ma,
-            ma_window=ma_window,
-            z_scores=z_scores,
-            abc_thresholds=abc_thresholds,
-            max_date=max_date,
-            granularity=granularity,
-            category_lead_times=category_lead_times,
-            group_lead_times=group_lead_times,
-            material_master=material_master,
-            date_from=date_from,
-            date_to=date_to,
-            trend_mode=trend_mode,
-            working_days_per_month=working_days_per_month,
-            selected_weeks=selected_weeks,
+            sales_data, price_data, plan_data, calc_mode="total", material_master=material_master, params=params,
         )
         logger.info(f" 總倉計算完成: {len(results_total)} 筆")
-
     except Exception as e:
         logger.exception(f" 計算過程發生錯誤：{e}")
         raise ValueError(f"計算失敗：{str(e)}") from e

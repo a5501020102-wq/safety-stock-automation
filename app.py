@@ -77,7 +77,7 @@ try:
         export_to_sap_mm17,
         serialize_results_for_json,
     )
-    from src.calculator import SafetyStockCalculator
+    from src.calculator import CalculationParams, SafetyStockCalculator
     from src.case_converter import keys_to_camel
     from src.data_loader import (
         DataLoadError,
@@ -665,6 +665,25 @@ def calculate():
     }
 
     # --- Run calculation ---------------------------------------------------
+    calc_params = CalculationParams(
+        selected_months=selected_months,
+        min_months=min_months,
+        lead_time_days=lead_time,
+        z_scores=z_scores,
+        abc_thresholds=abc_thresholds,
+        enable_outlier_detection=enable_outlier,
+        enable_moving_average=enable_ma,
+        ma_window=ma_window,
+        max_date=sales_data.max_date,
+        granularity=granularity_str,
+        category_lead_times=category_lead_times,
+        group_lead_times=group_lead_times,
+        date_from=date_from,
+        date_to=date_to,
+        trend_mode=trend_mode,
+        working_days_per_month=working_days,
+        selected_weeks=selected_weeks,
+    )
     calculator = SafetyStockCalculator()
     start_ts = time.perf_counter()
 
@@ -673,26 +692,10 @@ def calculate():
             comparison_data = calculate_comparison_mode(
                 calculator=calculator,
                 sales_data=sales_data,
+                params=calc_params,
                 price_data=price_data,
                 plan_data=plan_data,
-                selected_months=selected_months,
-                min_months=min_months,
-                lead_time=lead_time,
-                enable_outlier=enable_outlier,
-                enable_ma=enable_ma,
-                ma_window=ma_window,
-                z_scores=z_scores,
-                abc_thresholds=abc_thresholds,
-                max_date=sales_data.max_date,
-                granularity=granularity_str,
-                category_lead_times=category_lead_times,
-                group_lead_times=group_lead_times,
                 material_master=_MATERIAL_MASTER or None,
-                date_from=date_from,
-                date_to=date_to,
-                trend_mode=trend_mode,
-                working_days_per_month=working_days,
-                selected_weeks=selected_weeks,
             )
             # Reconstruct a light "options" object for snapshot building
             resolved_dpp = _resolve_days_per_period(granularity_str, working_days)
@@ -726,29 +729,13 @@ def calculate():
         else:
             target_site = params.get("target_site") or params.get("targetSite")
             results, excluded, summary = calculator.calculate(
-                sales_data=sales_data,
-                price_data=price_data,
-                plan_data=plan_data,
+                sales_data,
+                price_data,
+                plan_data,
                 calc_mode=calc_mode,
                 target_site=target_site,
-                selected_months=selected_months,
-                min_months=min_months,
-                lead_time_days=lead_time,
-                enable_outlier_detection=enable_outlier,
-                enable_moving_average=enable_ma,
-                ma_window=ma_window,
-                z_scores=z_scores,
-                abc_thresholds=abc_thresholds,
-                max_date=sales_data.max_date,
-                granularity=granularity_str,
-                category_lead_times=category_lead_times,
-                group_lead_times=group_lead_times,
                 material_master=_MATERIAL_MASTER or None,
-                date_from=date_from,
-                date_to=date_to,
-                trend_mode=trend_mode,
-                working_days_per_month=working_days,
-                selected_weeks=selected_weeks,
+                params=calc_params,
             )
 
             # 與 compare 模式對稱：snapshot 也要記錄 days_per_period 和 selected_weeks
