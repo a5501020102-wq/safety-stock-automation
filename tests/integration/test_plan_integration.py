@@ -500,7 +500,7 @@ class TestMonthlyPlanSerialization:
 
     def test_monthly_plan_serialized_to_json(self, calc):
         """monthly_plan 應正確序列化為 JSON dict。"""
-        from src.business_logic import serialize_results_for_json
+        from src.serialization import serialize_results_for_json
 
         sales = _build_test_sales_data()
         plan = _build_simple_plan(

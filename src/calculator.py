@@ -28,6 +28,7 @@ Key Features:
 """
 
 import calendar
+import copy
 import logging
 import math
 from dataclasses import dataclass, field
@@ -38,7 +39,6 @@ from typing import Any
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
-from .config_loader import config
 from .models import (
     KEY_DELIMITER,
     ABCClass,
@@ -77,6 +77,11 @@ logger = logging.getLogger(__name__)
 MAD_TO_SIGMA_CONSTANT = 1.4826
 DEFAULT_OVERSTOCK_MULTIPLIER = 3
 MIN_RELIABLE_SAMPLE_SIZE = 3
+
+# 各 ABC 類別的服務水準 Z 值：A=2.05（約 98%）、B=1.65（約 95%）、C=1.28（約 90%）
+DEFAULT_Z_SCORES: dict[str, float] = {"A": 2.05, "B": 1.65, "C": 1.28}
+# ABC 分類累計占比門檻（有單價依金額、無單價依數量）：前 80% 為 A、80-95% 為 B、其餘為 C
+DEFAULT_ABC_THRESHOLDS: dict[str, float] = {"A": 0.80, "B": 0.95}
 
 # Syntetos-Boylan 需求型態分類切點（業界標準值）
 # ADI (Average Demand Interval) = 期數 / 有需求期數
@@ -260,8 +265,8 @@ class CalculationOptions:
     granularity: Granularity = Granularity.MONTHLY
 
     # Classification parameters
-    abc_thresholds: dict[str, float] = field(default_factory=lambda: {"A": 0.80, "B": 0.95})
-    z_scores: dict[str, float] = field(default_factory=lambda: {"A": 2.05, "B": 1.65, "C": 1.28})
+    abc_thresholds: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_ABC_THRESHOLDS))
+    z_scores: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_Z_SCORES))
 
     # Stock health parameters
     overstock_multiplier: int = DEFAULT_OVERSTOCK_MULTIPLIER
@@ -306,6 +311,33 @@ class CalculationOptions:
 
 
 @dataclass
+class CalculationParams:
+    """使用者可調整的計算參數；None 表示沿用 CalculationOptions 的預設值。"""
+    selected_months: list[int] | None = None
+    min_months: int | None = None
+    lead_time_days: int | None = None
+    z_scores: dict[str, float] | None = None
+    abc_thresholds: dict[str, float] | None = None
+    enable_outlier_detection: bool | None = None
+    enable_moving_average: bool | None = None
+    ma_window: int | None = None
+    # 資料最大日期（用於排除未完成月份）；None 時改用 sales_data.max_date
+    max_date: datetime | None = None
+    granularity: str | Granularity | None = None
+    category_lead_times: dict[str, int] | None = None
+    group_lead_times: dict[str, int] | None = None
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    trend_mode: str = "none"
+    # 月粒度下覆寫 days_per_period（每月工作天數）
+    working_days_per_month: int | None = None
+    selected_weeks: list[str] | None = None
+
+
+TREND_MODES = ("short", "yoy", "none")
+
+
+@dataclass
 class CalculationRequest:
     """Request object for calculation."""
     sales_data: SalesData
@@ -325,34 +357,8 @@ class SafetyStockCalculator:
     """Safety Stock Calculator with ABC classification and outlier detection."""
 
     def __init__(self):
-        """Initialize calculator with default parameters from config."""
-        calc_config = config._config.get('calculation', {})
-        outlier_config = config._config.get('outlier_detection', {})
-        stock_health_config = calc_config.get('stock_health', {})
-        ma_config = calc_config.get('moving_average', {})
-
-        # Load default parameters from config
-        self._default_options = CalculationOptions(
-            lead_time_days=calc_config.get("lead_time_days", 30),
-            days_per_period=Granularity.MONTHLY.days_per_period,
-            min_months=calc_config.get("min_months", 2),
-            granularity=Granularity.MONTHLY,
-            abc_thresholds=calc_config.get("abc_thresholds", {"A": 0.80, "B": 0.95}).copy(),
-            z_scores=calc_config.get("z_scores", {"A": 2.05, "B": 1.65, "C": 1.28}).copy(),
-            overstock_multiplier=stock_health_config.get(
-                "overstock_multiplier", DEFAULT_OVERSTOCK_MULTIPLIER
-            ),
-            enable_outlier_detection=outlier_config.get("enabled", True),
-            mad_constant=outlier_config.get("consistency_constant", MAD_TO_SIGMA_CONSTANT),
-            mad_multiplier=outlier_config.get("multiplier", 3),
-            min_sample_size=outlier_config.get("min_sample_size", 2),
-            enable_moving_average=ma_config.get("enabled", False),
-            ma_window=ma_config.get("window", 3),
-            ma_min_periods=ma_config.get("min_periods", 2),
-            ma_fill_missing=ma_config.get("fill_missing", True),
-            ma_fill_value=ma_config.get("fill_value", 0.0),
-            default_order_quantity=calc_config.get("default_order_quantity", 0),
-        )
+        """Initialize calculator; CalculationOptions 的欄位預設值即為系統預設參數。"""
+        self._default_options = CalculationOptions()
 
         logger.info("SafetyStockCalculator initialized (v4.3.4 - Z-scores & ABC Support)")
 
@@ -363,24 +369,9 @@ class SafetyStockCalculator:
             plan_data: PlanData | None = None,
             calc_mode: str = "all",
             target_site: str | None = None,
-            selected_months: list[int] | None = None,
-            min_months: int | None = None,
-            lead_time_days: int | None = None,
-            z_scores: dict[str, float] | None = None,
-            abc_thresholds: dict[str, float] | None = None,
-            enable_outlier_detection: bool | None = None,
-            enable_moving_average: bool | None = None,
-            ma_window: int | None = None,
-            max_date: datetime | None = None,
-            granularity: str | Granularity | None = None,
-            category_lead_times: dict[str, int] | None = None,
-            group_lead_times: dict[str, int] | None = None,
             material_master: dict[str, Any] | None = None,
-            date_from: datetime | None = None,
-            date_to: datetime | None = None,
-            trend_mode: str = "none",
-            working_days_per_month: int | None = None,
-            selected_weeks: list[str] | None = None,
+            params: CalculationParams | None = None,
+            **param_overrides: Any,
     ) -> tuple[list[CalculationResult], list[ExcludedItem], CalculationSummary]:
         """
         Execute the complete safety stock calculation.
@@ -391,48 +382,24 @@ class SafetyStockCalculator:
             plan_data: 庫存計畫資料（可選）
             calc_mode: 計算模式 ('all', 'total', 'single')
             target_site: 目標出貨點（僅 single 模式）
-            selected_months: 選擇的月份列表
-            min_months: 最少需求月數
-            lead_time_days: 前置天數
-            z_scores: 服務水準 Z-scores，例如 {"A": 2.05, "B": 1.65, "C": 1.28}
-            abc_thresholds: ABC 分類門檻，例如 {"A": 0.80, "B": 0.95}
-            enable_outlier_detection: 是否啟用離群值檢測
-            enable_moving_average: 是否啟用移動平均
-            ma_window: 移動平均窗口大小
-            selected_weeks: 週模式下選定的週列表（例如 ["2025-W10", "2025-W11"]）
+            material_master: 物料主檔（品類前置天數覆寫用，可選）
+            params: 計算參數物件
+            **param_overrides: 不傳 params 時，可直接以 CalculationParams 的欄位名稱指定個別參數
 
         Returns:
             (結果列表, 排除項目列表, 計算摘要)
         """
+        if params is not None and param_overrides:
+            raise TypeError("params 與個別參數只能擇一傳入")
+        if params is None:
+            params = CalculationParams(**param_overrides)
+
         logger.info("=" * 60)
         logger.info("開始安全庫存計算 (v4.4.0)")
         logger.info("=" * 60)
 
-        # Resolve max_date: prefer explicit param, fallback to sales_data
-        resolved_max_date = max_date or getattr(sales_data, 'max_date', None)
+        options = self._create_options(params, default_max_date=getattr(sales_data, "max_date", None))
 
-        # Create options with overrides
-        options = self._create_options(
-            selected_months=selected_months,
-            min_months=min_months,
-            lead_time_days=lead_time_days,
-            z_scores=z_scores,
-            abc_thresholds=abc_thresholds,
-            enable_outlier_detection=enable_outlier_detection,
-            enable_moving_average=enable_moving_average,
-            ma_window=ma_window,
-            max_date=resolved_max_date,
-            granularity=granularity,
-            category_lead_times=category_lead_times,
-            group_lead_times=group_lead_times,
-            date_from=date_from,
-            date_to=date_to,
-            trend_mode=trend_mode,
-            working_days_per_month=working_days_per_month,
-            selected_weeks=selected_weeks,
-        )
-
-        # v4.3.4: 日誌輸出參數資訊
         logger.info(" 計算參數：")
         logger.info(f"   服務水準: A={options.z_scores['A']:.2f}, "
                     f"B={options.z_scores['B']:.2f}, "
@@ -442,7 +409,6 @@ class SafetyStockCalculator:
         logger.info(f"   前置期: {options.lead_time_days} 天")
         logger.info(f"   最少月數: {options.min_months}")
 
-        # Create request object
         request = CalculationRequest(
             sales_data=sales_data,
             price_data=price_data,
@@ -453,125 +419,60 @@ class SafetyStockCalculator:
             material_master=material_master,
         )
 
-        # Execute calculation pipeline
-        try:
-            results, excluded, summary = self._execute_calculation(request)
-            logger.info(f" 計算完成: {summary.total_skus} 個 SKU")
-            return results, excluded, summary
-        except Exception as e:
-            logger.error(f" 計算失敗: {e}")
-            raise
+        results, excluded, summary = self._execute_calculation(request)
+        logger.info(f" 計算完成: {summary.total_skus} 個 SKU")
+        return results, excluded, summary
 
     def _create_options(
             self,
-            selected_months: list[int] | None = None,
-            min_months: int | None = None,
-            lead_time_days: int | None = None,
-            z_scores: dict[str, float] | None = None,
-            abc_thresholds: dict[str, float] | None = None,
-            enable_outlier_detection: bool | None = None,
-            enable_moving_average: bool | None = None,
-            ma_window: int | None = None,
-            max_date: datetime | None = None,
-            granularity: str | Granularity | None = None,
-            category_lead_times: dict[str, int] | None = None,
-            group_lead_times: dict[str, int] | None = None,
-            date_from: datetime | None = None,
-            date_to: datetime | None = None,
-            trend_mode: str = "none",
-            working_days_per_month: int | None = None,
-            selected_weeks: list[str] | None = None,
+            params: CalculationParams,
+            default_max_date: datetime | None = None,
     ) -> CalculationOptions:
-        """Create calculation options with overrides applied to defaults."""
-        # Resolve granularity
-        resolved_granularity = self._default_options.granularity
-        if granularity is not None:
-            if isinstance(granularity, str):
-                resolved_granularity = Granularity(granularity)
-            else:
-                resolved_granularity = granularity
-
-        # Start with defaults
-        options = CalculationOptions(
-            lead_time_days=self._default_options.lead_time_days,
-            days_per_period=resolved_granularity.days_per_period,
-            min_months=self._default_options.min_months,
-            granularity=resolved_granularity,
-            abc_thresholds=self._default_options.abc_thresholds.copy(),
-            z_scores=self._default_options.z_scores.copy(),
-            overstock_multiplier=self._default_options.overstock_multiplier,
-            enable_outlier_detection=self._default_options.enable_outlier_detection,
-            mad_constant=self._default_options.mad_constant,
-            mad_multiplier=self._default_options.mad_multiplier,
-            min_sample_size=self._default_options.min_sample_size,
-            min_confidence_samples=self._default_options.min_confidence_samples,
-            selected_months=self._default_options.selected_months.copy(),
-            enable_moving_average=self._default_options.enable_moving_average,
-            ma_window=self._default_options.ma_window,
-            ma_min_periods=self._default_options.ma_min_periods,
-            ma_fill_missing=self._default_options.ma_fill_missing,
-            ma_fill_value=self._default_options.ma_fill_value,
-            default_order_quantity=self._default_options.default_order_quantity,
+        """以預設選項為底，套用使用者參數的覆寫。"""
+        granularity = (
+            Granularity(params.granularity) if params.granularity is not None
+            else self._default_options.granularity
         )
+        # deepcopy 避免覆寫時改到 _default_options 內的 dict / list
+        options = copy.deepcopy(self._default_options)
+        options.granularity = granularity
+        options.days_per_period = granularity.days_per_period
 
-        # Apply overrides
-        if lead_time_days is not None:
-            options.lead_time_days = lead_time_days
-            logger.debug(f"覆寫 lead_time_days: {lead_time_days}")
+        scalar_overrides = {
+            "lead_time_days": params.lead_time_days,
+            "min_months": params.min_months,
+            "enable_outlier_detection": params.enable_outlier_detection,
+            "enable_moving_average": params.enable_moving_average,
+            "ma_window": params.ma_window,
+            "max_date": params.max_date or default_max_date,
+            "date_from": params.date_from,
+            "date_to": params.date_to,
+        }
+        for name, value in scalar_overrides.items():
+            if value is not None:
+                setattr(options, name, value)
 
-        if min_months is not None:
-            options.min_months = min_months
-            logger.debug(f"覆寫 min_months: {min_months}")
+        if params.z_scores is not None:
+            options.z_scores = params.z_scores.copy()
+        if params.abc_thresholds is not None:
+            options.abc_thresholds = params.abc_thresholds.copy()
+        if params.selected_months is not None:
+            options.selected_months = params.selected_months.copy()
 
-        if z_scores is not None:
-            options.z_scores = z_scores.copy()
-            logger.debug(f"覆寫 z_scores: {z_scores}")
+        if params.category_lead_times:
+            options.category_lead_times = {str(k): int(v) for k, v in params.category_lead_times.items()}
+        if params.group_lead_times:
+            options.group_lead_times = {str(k): int(v) for k, v in params.group_lead_times.items()}
 
-        # v4.3.4: 處理 abc_thresholds 覆寫
-        if abc_thresholds is not None:
-            options.abc_thresholds = abc_thresholds.copy()
-            logger.debug(f"覆寫 abc_thresholds: {abc_thresholds}")
+        if params.trend_mode in TREND_MODES:
+            options.trend_mode = params.trend_mode
 
-        if enable_outlier_detection is not None:
-            options.enable_outlier_detection = enable_outlier_detection
-            logger.debug(f"覆寫 enable_outlier_detection: {enable_outlier_detection}")
+        if params.working_days_per_month is not None and granularity == Granularity.MONTHLY:
+            options.days_per_period = params.working_days_per_month
 
-        if selected_months is not None:
-            options.selected_months = selected_months.copy()
-            logger.debug(f"覆寫 selected_months: {selected_months}")
-
-        if enable_moving_average is not None:
-            options.enable_moving_average = enable_moving_average
-            logger.debug(f"覆寫 enable_moving_average: {enable_moving_average}")
-
-        if ma_window is not None:
-            options.ma_window = ma_window
-            logger.debug(f"覆寫 ma_window: {ma_window}")
-
-        if max_date is not None:
-            options.max_date = max_date
-            logger.debug(f"覆寫 max_date: {max_date}")
-
-        if category_lead_times:
-            options.category_lead_times = {str(k): int(v) for k, v in category_lead_times.items()}
-        if group_lead_times:
-            options.group_lead_times = {str(k): int(v) for k, v in group_lead_times.items()}
-
-        if date_from is not None:
-            options.date_from = date_from
-        if date_to is not None:
-            options.date_to = date_to
-
-        if trend_mode in ("short", "yoy", "none"):
-            options.trend_mode = trend_mode
-
-        if working_days_per_month is not None and options.granularity == Granularity.MONTHLY:
-            options.days_per_period = working_days_per_month
-
-        # 週模式：設定 selected_weeks
-        # 有值時改用日數據計算，days_per_period 在 _calculate_safety_stock 中覆寫為 1
-        if selected_weeks and options.granularity == Granularity.WEEKLY:
-            options.selected_weeks = selected_weeks.copy()
+        # 週模式：有選定週時改用日數據計算，days_per_period 在 _calculate_safety_stock 中覆寫為 1
+        if params.selected_weeks and granularity == Granularity.WEEKLY:
+            options.selected_weeks = params.selected_weeks.copy()
 
         return options
 

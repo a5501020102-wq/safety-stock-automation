@@ -11,6 +11,7 @@
 - **部署**：Vercel（前端）+ Render Free（後端）
 - **業務領域**：管材建材業採購安全庫存計算
 - **詳細文件**：`TECHNICAL_SPEC.md`（技術）、`USER_GUIDE.md`（使用者）
+- **後端結構**：`app.py`（進入點）→ `src/api/`（Blueprint 路由、參數驗證、錯誤處理）→ `src/services/`（業務流程）→ `calculator.py` / `comparison.py` / `exports/` / `serialization.py`
 
 ---
 
@@ -101,8 +102,9 @@
 ## 測試 / Testing
 
 ### 現況
-- Python 單元測試：0 個
-- Playwright E2E：33 個（全綠）
+- pytest：244 個（全綠；pre-commit 只跑其中不需真實資料的部分）
+- Playwright E2E：35 個（全綠）
+- 黃金樣本：`tests/golden/golden_master.py`，重構前後擷取 API 與匯出的完整輸出逐值比對；基準含真實資料，存放在 repo 外
 
 ### 目標（棘輪原則 ratchet — 只能進步不能退步）
 - `calculator.py` 新增程式碼 → 必須附單元測試
@@ -151,7 +153,6 @@
 - **`_fill_missing_periods` 的 `selectedMonths`** 是「跳過」非「填零」。新功能若依賴 series 長度必須注意
 - **`working_days_per_month`** 只在 monthly granularity 下覆寫 `days_per_period`，影響所有計算（SS/ROP/Max/Daily）
 - **`localStorage` key 是 `ss-workflow:v1`** — 不可隨意改
-- **`src/business_logic.py` 的 Render import fallback** — Render 環境 `import calculator`（無前綴）會失敗，fallback 到 `Any` 型別（本地開發路徑不同所以正常）。影響：Render 上型別檢查失效，但運作正常。待修：統一改成 `from src.calculator import ...` 或相對 import。發現於 2026-04-24 Step 1 部署時觀察 build log。
 
 ---
 
